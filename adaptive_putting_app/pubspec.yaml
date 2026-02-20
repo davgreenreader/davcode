@@ -1,0 +1,44 @@
+name: adaptive_golf_putter
+description: Haptic feedback putting assistant for visually impaired golfers
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # BLE Communication
+  flutter_blue_plus: ^1.31.0
+  
+  # Camera & ML
+  camera: ^0.10.5+9
+  google_mlkit_object_detection: ^0.11.0
+  
+  # Haptic Feedback
+  vibration: ^1.8.4
+  audioplayers: ^5.2.1
+  
+  # State Management
+  provider: ^6.1.1
+  
+  # Permissions
+  permission_handler: ^11.1.0
+  
+  # Utilities
+  vector_math: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/sounds/
