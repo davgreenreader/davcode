@@ -23,6 +23,7 @@ dependencies:
   vibration: ^1.8.4
   audioplayers: ^5.2.1
   flutter_tts: ^3.8.5
+  web_socket_channel: ^2.4.0
   
   # State Management
   provider: ^6.1.1

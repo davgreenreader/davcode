@@ -55,7 +55,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
       _logMessages = [];
     });
     
-    _addLog('🚀 Simulation started');
+    _addLog('Simulation started');
     _simulation.startSimulation(autoAdjust: _autoMode);
     
     // Audio feedback every 1 second
@@ -74,7 +74,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
     
     _simulation.stopSimulation();
     _audioTimer?.cancel();
-    _addLog('🛑 Simulation stopped');
+    _addLog('Simulation stopped');
   }
   
   void _addLog(String message) {
@@ -98,40 +98,40 @@ class _SimulationScreenState extends State<SimulationScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: const Color(0xFFFFFFFF),
       appBar: AppBar(
-        title: const Text('UWB Simulation'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+        title: const Text('UWB SIMULATION'),
+        backgroundColor: const Color(0xFF000000),
+        foregroundColor: const Color(0xFFFFFFFF),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Alignment Visualization
               _buildAlignmentVisualization(),
               
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
               
               // Data Display
               _buildDataDisplay(),
               
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
               
               // Manual Controls
               if (_isRunning && !_autoMode) _buildManualControls(),
               
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
               
               // Control Buttons
               _buildControlButtons(),
               
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
               
               // Log Display
-              Expanded(child: _buildLogDisplay()),
+              _buildLogDisplay(),
             ],
           ),
         ),
@@ -140,99 +140,110 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
   
   Widget _buildAlignmentVisualization() {
-  double angle = _currentAlignment?.angleOffset ?? 0;
-  AlignmentInstruction instruction = _currentInstruction;
-  
-  Color indicatorColor;
-  String statusText;
-  
-  // Determine which side the aim is currently pointing
-  String aimSide = '';
-  if (angle.abs() > 1) {
-    aimSide = angle > 0 ? '(aimed right of hole)' : '(aimed left of hole)';
-  }
-  
-  switch (instruction) {
-    case AlignmentInstruction.aligned:
-      indicatorColor = Colors.green;
-      statusText = '✓ ALIGNED';
-      break;
-    case AlignmentInstruction.slightlyLeft:
-      indicatorColor = Colors.yellow;
-      statusText = '← Rotate Left (slight)';
-      break;
-    case AlignmentInstruction.slightlyRight:
-      indicatorColor = Colors.yellow;
-      statusText = 'Rotate Right (slight) →';
-      break;
-    case AlignmentInstruction.rotateLeft:
-      indicatorColor = Colors.orange;
-      statusText = '⟵ Rotate Left';
-      break;
-    case AlignmentInstruction.rotateRight:
-      indicatorColor = Colors.orange;
-      statusText = 'Rotate Right ⟶';
-      break;
-  }
-  
-  return Container(
-    height: 200,
-    decoration: BoxDecoration(
-      color: Colors.grey[900],
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: indicatorColor, width: 3),
-    ),
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        // Angle display
-        Text(
-          '${angle.toStringAsFixed(1)}°',
-          style: TextStyle(
-            fontSize: 48,
-            fontWeight: FontWeight.bold,
-            color: indicatorColor,
+    double angle = _currentAlignment?.angleOffset ?? 0;
+    AlignmentInstruction instruction = _currentInstruction;
+    
+    // High contrast colors with redundant signaling
+    Color backgroundColor;
+    Color foregroundColor;
+    String statusText;
+    IconData statusIcon;
+    
+    switch (instruction) {
+      case AlignmentInstruction.aligned:
+        backgroundColor = const Color(0xFF006600);  // Dark green
+        foregroundColor = const Color(0xFFFFFFFF);
+        statusText = '✓ ALIGNED';
+        statusIcon = Icons.check_circle;
+        break;
+      case AlignmentInstruction.slightlyLeft:
+        backgroundColor = const Color(0xFFFFCC00);  // Yellow
+        foregroundColor = const Color(0xFF000000);
+        statusText = '← SLIGHT LEFT';
+        statusIcon = Icons.arrow_back;
+        break;
+      case AlignmentInstruction.slightlyRight:
+        backgroundColor = const Color(0xFFFFCC00);  // Yellow
+        foregroundColor = const Color(0xFF000000);
+        statusText = 'SLIGHT RIGHT →';
+        statusIcon = Icons.arrow_forward;
+        break;
+      case AlignmentInstruction.rotateLeft:
+        backgroundColor = const Color(0xFFCC6600);  // Orange
+        foregroundColor = const Color(0xFFFFFFFF);
+        statusText = '⟵ ROTATE LEFT';
+        statusIcon = Icons.rotate_left;
+        break;
+      case AlignmentInstruction.rotateRight:
+        backgroundColor = const Color(0xFFCC6600);  // Orange
+        foregroundColor = const Color(0xFFFFFFFF);
+        statusText = 'ROTATE RIGHT ⟶';
+        statusIcon = Icons.rotate_right;
+        break;
+    }
+    
+    // Aim description for redundant signaling
+    String aimDescription = '';
+    if (angle.abs() > 1) {
+      aimDescription = angle > 0 
+          ? '(Currently aimed RIGHT of hole)' 
+          : '(Currently aimed LEFT of hole)';
+    }
+    
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF000000), width: 3),
+      ),
+      child: Column(
+        children: [
+          // Icon for redundant signaling
+          Icon(
+            statusIcon,
+            size: 60,
+            color: foregroundColor,
           ),
-        ),
-        
-        const SizedBox(height: 4),
-        
-        // Shows where putter is currently aimed
-        Text(
-          aimSide,
-          style: const TextStyle(
-            fontSize: 14,
-            color: Colors.white54,
+          
+          const SizedBox(height: 12),
+          
+          // Angle display
+          Text(
+            '${angle.toStringAsFixed(1)}°',
+            style: TextStyle(
+              fontSize: 48,
+              fontWeight: FontWeight.bold,
+              color: foregroundColor,
+              fontFamily: 'Arial',
+            ),
           ),
-        ),
-        
-        const SizedBox(height: 8),
-        
-        // Instruction - which way to rotate
-        Text(
-          statusText,
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: indicatorColor,
+          
+          const SizedBox(height: 8),
+          
+          // Status text
+          Text(
+            statusText,
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              color: foregroundColor,
+              fontFamily: 'Arial',
+            ),
           ),
-        ),
-        
-        const SizedBox(height: 16),
-        
-        // Visual angle indicator
-        _buildAngleIndicator(angle, indicatorColor),
-      ],
-    ),
-  );
-}
-  
-  Widget _buildAngleIndicator(double angle, Color color) {
-    return SizedBox(
-      width: 200,
-      height: 40,
-      child: CustomPaint(
-        painter: AngleIndicatorPainter(angle: angle, color: color),
+          
+          if (aimDescription.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              aimDescription,
+              style: TextStyle(
+                fontSize: 18,
+                color: foregroundColor.withOpacity(0.9),
+                fontFamily: 'Arial',
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -241,38 +252,42 @@ class _SimulationScreenState extends State<SimulationScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey[850],
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF000000), width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Simulated UWB Data',
+            'SENSOR DATA:',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: Colors.white70,
+              color: Color(0xFF000000),
+              fontFamily: 'Arial',
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _buildDataItem(
-                'Left Sensor (dL)',
+                'Left (dL)',
                 _currentUWBData?.distanceLeft.toStringAsFixed(3) ?? '-.---',
-                'm',
+                'meters',
               ),
+              Container(width: 2, height: 50, color: const Color(0xFF000000)),
               _buildDataItem(
-                'Right Sensor (dR)',
+                'Right (dR)',
                 _currentUWBData?.distanceRight.toStringAsFixed(3) ?? '-.---',
-                'm',
+                'meters',
               ),
+              Container(width: 2, height: 50, color: const Color(0xFF000000)),
               _buildDataItem(
-                'Baseline (b)',
+                'Baseline',
                 _currentUWBData?.baseline.toStringAsFixed(3) ?? '0.150',
-                'm',
+                'meters',
               ),
             ],
           ),
@@ -286,62 +301,91 @@ class _SimulationScreenState extends State<SimulationScreen> {
       children: [
         Text(
           label,
-          style: const TextStyle(fontSize: 12, color: Colors.white54),
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF333333),
+            fontFamily: 'Arial',
+          ),
         ),
         const SizedBox(height: 4),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                fontFamily: 'monospace',
-              ),
-            ),
-            Text(
-              unit,
-              style: const TextStyle(fontSize: 14, color: Colors.white54),
-            ),
-          ],
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF000000),
+            fontFamily: 'Arial',
+          ),
+        ),
+        Text(
+          unit,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF666666),
+            fontFamily: 'Arial',
+          ),
         ),
       ],
     );
   }
   
   Widget _buildManualControls() {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () {
-              _simulation.rotateLeft();
-              _addLog('👈 User rotated left');
-            },
-            icon: const Icon(Icons.rotate_left, size: 32),
-            label: const Text('Rotate Left', style: TextStyle(fontSize: 18)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue[700],
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
+        const Text(
+          'MANUAL CONTROL:',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF000000),
+            fontFamily: 'Arial',
           ),
         ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () {
-              _simulation.rotateRight();
-              _addLog('👉 User rotated right');
-            },
-            icon: const Icon(Icons.rotate_right, size: 32),
-            label: const Text('Rotate Right', style: TextStyle(fontSize: 18)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue[700],
-              padding: const EdgeInsets.symmetric(vertical: 16),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  _simulation.rotateLeft();
+                  _addLog('Rotated left');
+                },
+                icon: const Icon(Icons.rotate_left, size: 28),
+                label: const Text('LEFT', style: TextStyle(fontSize: 18)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0000AA),
+                  foregroundColor: const Color(0xFFFFFFFF),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: const BorderSide(color: Color(0xFF000000), width: 2),
+                  ),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  _simulation.rotateRight();
+                  _addLog('Rotated right');
+                },
+                icon: const Icon(Icons.rotate_right, size: 28),
+                label: const Text('RIGHT', style: TextStyle(fontSize: 18)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0000AA),
+                  foregroundColor: const Color(0xFFFFFFFF),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: const BorderSide(color: Color(0xFF000000), width: 2),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -349,32 +393,49 @@ class _SimulationScreenState extends State<SimulationScreen> {
   
   Widget _buildControlButtons() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // Auto mode toggle
-        Row(
-          children: [
-            Checkbox(
-              value: _autoMode,
-              onChanged: _isRunning ? null : (value) {
-                setState(() {
-                  _autoMode = value ?? false;
-                });
-              },
-              activeColor: Colors.greenAccent,
-            ),
-            const Text(
-              'Auto-adjust mode (simulates user following instructions)',
-              style: TextStyle(fontSize: 14),
-            ),
-          ],
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFF000000), width: 2),
+          ),
+          child: Row(
+            children: [
+              Checkbox(
+                value: _autoMode,
+                onChanged: _isRunning ? null : (value) {
+                  setState(() {
+                    _autoMode = value ?? false;
+                  });
+                },
+                activeColor: const Color(0xFF000000),
+                checkColor: const Color(0xFFFFFFFF),
+                side: const BorderSide(color: Color(0xFF000000), width: 2),
+              ),
+              const Expanded(
+                child: Text(
+                  'Auto-adjust mode (simulates following instructions)',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Color(0xFF000000),
+                    fontFamily: 'Arial',
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         
-        const SizedBox(height: 8),
+        const SizedBox(height: 16),
         
         // Start/Stop button
         AccessibilityButton(
-          label: _isRunning ? 'Stop Simulation' : 'Start Simulation',
-          semanticsHint: _isRunning ? 'Stop the UWB simulation' : 'Start the UWB simulation',
+          label: _isRunning ? 'STOP SIMULATION' : 'START SIMULATION',
+          semanticsHint: _isRunning ? 'Stop the simulation' : 'Start the simulation',
           icon: _isRunning ? Icons.stop : Icons.play_arrow,
           onPressed: _isRunning ? _stopSimulation : _startSimulation,
           isPrimary: !_isRunning,
@@ -385,30 +446,32 @@ class _SimulationScreenState extends State<SimulationScreen> {
   
   Widget _buildLogDisplay() {
     return Container(
+      height: 200,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[800]!),
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF000000), width: 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Row(
             children: [
-              Icon(Icons.terminal, size: 16, color: Colors.greenAccent),
+              Icon(Icons.list_alt, size: 20, color: Color(0xFF000000)),
               SizedBox(width: 8),
               Text(
-                'Audio Log',
+                'AUDIO LOG:',
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 16,
                   fontWeight: FontWeight.bold,
-                  color: Colors.greenAccent,
+                  color: Color(0xFF000000),
+                  fontFamily: 'Arial',
                 ),
               ),
             ],
           ),
-          const Divider(color: Colors.grey),
+          const Divider(color: Color(0xFF000000), thickness: 1),
           Expanded(
             child: ListView.builder(
               itemCount: _logMessages.length,
@@ -418,9 +481,9 @@ class _SimulationScreenState extends State<SimulationScreen> {
                   child: Text(
                     _logMessages[index],
                     style: const TextStyle(
-                      fontSize: 12,
-                      fontFamily: 'monospace',
-                      color: Colors.white70,
+                      fontSize: 14,
+                      fontFamily: 'Arial',
+                      color: Color(0xFF333333),
                     ),
                   ),
                 );
@@ -430,59 +493,5 @@ class _SimulationScreenState extends State<SimulationScreen> {
         ],
       ),
     );
-  }
-}
-
-/// Custom painter for the angle indicator
-class AngleIndicatorPainter extends CustomPainter {
-  final double angle;
-  final Color color;
-  
-  AngleIndicatorPainter({required this.angle, required this.color});
-  
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.grey[700]!
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke;
-    
-    // Draw background line
-    canvas.drawLine(
-      Offset(0, size.height / 2),
-      Offset(size.width, size.height / 2),
-      paint,
-    );
-    
-    // Draw center mark
-    paint.color = Colors.white54;
-    canvas.drawLine(
-      Offset(size.width / 2, size.height / 2 - 10),
-      Offset(size.width / 2, size.height / 2 + 10),
-      paint,
-    );
-    
-    // Draw current position indicator
-    // Map angle (-45 to +45) to position (0 to width)
-    double normalizedAngle = (angle.clamp(-45, 45) + 45) / 90;
-    double indicatorX = normalizedAngle * size.width;
-    
-    final indicatorPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.fill;
-    
-    // Draw triangle indicator
-    final path = Path();
-    path.moveTo(indicatorX, size.height / 2 - 15);
-    path.lineTo(indicatorX - 10, size.height / 2 + 10);
-    path.lineTo(indicatorX + 10, size.height / 2 + 10);
-    path.close();
-    
-    canvas.drawPath(path, indicatorPaint);
-  }
-  
-  @override
-  bool shouldRepaint(covariant AngleIndicatorPainter oldDelegate) {
-    return oldDelegate.angle != angle || oldDelegate.color != color;
   }
 }
