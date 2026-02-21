@@ -4,6 +4,7 @@ import '../providers/app_state_provider.dart';
 import '../widgets/accessibility_button.dart';
 import 'hardware_mode_screen.dart';
 import 'camera_mode_screen.dart';
+import 'simulation_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -11,7 +12,7 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: SafeArea(
         child: Semantics(
           label: 'Adaptive Golf Putter Home Screen',
@@ -45,6 +46,23 @@ class HomeScreen extends StatelessWidget {
                 ),
                 
                 const SizedBox(height: 48),
+                
+                // Simulation Mode Button (NEW!)
+                AccessibilityButton(
+                  label: 'UWB Simulation',
+                  semanticsHint: 'Test with simulated UWB data',
+                  icon: Icons.science,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const SimulationScreen(),
+                      ),
+                    );
+                  },
+                ),
+                
+                const SizedBox(height: 24),
                 
                 // Hardware Mode Button
                 AccessibilityButton(
