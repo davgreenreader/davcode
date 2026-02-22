@@ -3,8 +3,8 @@ import 'package:provider/provider.dart';
 import '../providers/app_state_provider.dart';
 import '../widgets/accessibility_button.dart';
 import 'hardware_mode_screen.dart';
-import 'camera_mode_screen.dart';
 import 'simulation_screen.dart';
+import 'voice_alignment_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -12,7 +12,6 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Clean white background
       backgroundColor: const Color(0xFFFFFFFF),
       body: SafeArea(
         child: Semantics(
@@ -25,30 +24,30 @@ class HomeScreen extends StatelessWidget {
                 children: [
                   const SizedBox(height: 20),
                   
-                  // App Title - Large, high contrast, single line
-Semantics(
-  header: true,
-  child: Container(
-    padding: const EdgeInsets.all(24),
-    decoration: BoxDecoration(
-      color: const Color(0xFF000000),
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: const FittedBox(
-      fit: BoxFit.fitWidth,
-      child: Text(
-        'ADAPTIVE GOLF PUTTER',
-        style: TextStyle(
-          fontSize: 50, // Large base size, FittedBox scales to fit
-          fontWeight: FontWeight.bold,
-          color: Color(0xFFFFFF00), // Yellow for high contrast
-          fontFamily: 'Arial',
-          letterSpacing: 1,
-        ),
-      ),
-    ),
-  ),
-),
+                  // App Title
+                  Semantics(
+                    header: true,
+                    child: Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF000000),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const FittedBox(
+                        fit: BoxFit.fitWidth,
+                        child: Text(
+                          'ADAPTIVE GOLF PUTTER',
+                          style: TextStyle(
+                            fontSize: 100,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFFFFF00),
+                            fontFamily: 'Arial',
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                   
                   const SizedBox(height: 24),
                   
@@ -88,15 +87,28 @@ Semantics(
                   
                   const SizedBox(height: 16),
                   
-                  // Visual divider
-                  Container(
-                    height: 4,
-                    color: const Color(0xFF000000),
-                  ),
+                  Container(height: 4, color: const Color(0xFF000000)),
                   
                   const SizedBox(height: 24),
                   
-                  // Simulation Mode Button
+                  // Voice Alignment Mode (Primary)
+                  AccessibilityButton(
+                    label: 'VOICE ALIGNMENT',
+                    semanticsHint: 'Align using voice commands and compass',
+                    icon: Icons.mic,
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const VoiceAlignmentScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // UWB Simulation Button
                   AccessibilityButton(
                     label: 'UWB SIMULATION',
                     semanticsHint: 'Test with simulated UWB sensor data',
@@ -128,34 +140,12 @@ Semantics(
                     },
                   ),
                   
-                  const SizedBox(height: 16),
-                  
-                  // Camera Mode Button
-                  AccessibilityButton(
-                    label: 'CAMERA MODE',
-                    semanticsHint: 'Use AprilTag vision tracking',
-                    icon: Icons.camera_alt,
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const CameraModeScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  
                   const SizedBox(height: 32),
                   
-                  // Visual divider
-                  Container(
-                    height: 4,
-                    color: const Color(0xFF000000),
-                  ),
+                  Container(height: 4, color: const Color(0xFF000000)),
                   
                   const SizedBox(height: 24),
                   
-                  // Settings section label
                   const Text(
                     'SETTINGS:',
                     style: TextStyle(
@@ -168,7 +158,7 @@ Semantics(
                   
                   const SizedBox(height: 16),
                   
-                  // Haptic Toggle - Secondary style
+                  // Haptic Toggle
                   Consumer<AppStateProvider>(
                     builder: (context, state, _) => AccessibilityButton(
                       label: state.isHapticEnabled 

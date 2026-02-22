@@ -169,13 +169,13 @@ class _SimulationScreenState extends State<SimulationScreen> {
         statusIcon = Icons.arrow_forward;
         break;
       case AlignmentInstruction.rotateLeft:
-        backgroundColor = const Color(0xFFCC6600);  // Orange
+        backgroundColor = const Color.fromARGB(255, 204, 0, 0);  // Orange
         foregroundColor = const Color(0xFFFFFFFF);
         statusText = '⟵ ROTATE LEFT';
         statusIcon = Icons.rotate_left;
         break;
       case AlignmentInstruction.rotateRight:
-        backgroundColor = const Color(0xFFCC6600);  // Orange
+        backgroundColor = const Color.fromARGB(255, 204, 0, 0);  // Orange
         foregroundColor = const Color(0xFFFFFFFF);
         statusText = 'ROTATE RIGHT ⟶';
         statusIcon = Icons.rotate_right;
