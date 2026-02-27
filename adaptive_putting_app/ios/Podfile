@@ -40,5 +40,13 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    
+    # 1. Force the Target itself to iOS 17.0
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '17.0'
+      
+      # 2. This disables the "Signing" errors you sometimes get with Pods
+      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+    end
   end
 end
