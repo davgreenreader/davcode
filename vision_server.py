@@ -32,7 +32,7 @@ def run_websocket_server():
 
 def vision_loop():
     global latest_alignment
-    cap = cv2.VideoCapture(1) # Remember to use your working index!
+    cap = cv2.VideoCapture(0) # Remember to use your working index!
 
     aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
     parameters = aruco.DetectorParameters()
@@ -45,7 +45,11 @@ def vision_loop():
         [-marker_length/2, -marker_length/2, 0]
     ], dtype=np.float32)
 
-    camera_matrix = np.array([[1000.0, 0, 640.0], [0, 1000.0, 360.0], [0, 0, 1]], dtype=np.float32)
+    # Webcam dimensions
+    # camera_matrix = np.array([[1000.0, 0, 640.0], [0, 1000.0, 360.0], [0, 0, 1]], dtype=np.float32)
+
+    # iPhone cam dimensions
+    camera_matrix = np.array([[2547.0, 0, 640.0], [0, 2547.0, 360.0], [0, 0, 1]], dtype=np.float32)
     dist_coeffs = np.zeros((4,1)) 
 
     print("Camera active. Looking for markers...")
