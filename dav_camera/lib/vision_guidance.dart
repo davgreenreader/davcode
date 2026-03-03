@@ -102,7 +102,8 @@ class VisionGuidance extends StatefulWidget {
 }
 
 class _VisionGuidanceState extends State<VisionGuidance> {
-  final String serverUrl = 'ws://127.0.0.1:8765'; // Keeping localhost for Chrome
+  // final String serverUrl = 'ws://127.0.0.1:8765'; // Keeping localhost for Chrome
+  final String serverUrl = 'ws://10.203.69.48:8765'; // Mac host for phone integration
   late WebSocketChannel _channel;
   final FlutterTts _flutterTts = FlutterTts();
 
