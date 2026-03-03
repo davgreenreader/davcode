@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/simulation_service.dart';
 import '../services/alignment_calculator.dart';
 import '../services/audio_service.dart';
@@ -23,6 +24,8 @@ class _SimulationScreenState extends State<SimulationScreen> {
   List<String> _logMessages = [];
   bool _isRunning = false;
   bool _autoMode = false;
+  bool _showAngle = true; // Toggle for showing/hiding angle
+  int _lastSpokenDingCount = 0;
   
   StreamSubscription? _alignmentSub;
   StreamSubscription? _uwbDataSub;
@@ -53,18 +56,51 @@ class _SimulationScreenState extends State<SimulationScreen> {
     setState(() {
       _isRunning = true;
       _logMessages = [];
+      _lastSpokenDingCount = 0;
     });
     
     _addLog('Simulation started');
-    _simulation.startSimulation(autoAdjust: _autoMode);
+    _simulation.startSimulation(
+      autoAdjust: _autoMode,
+      onAutoStop: _onAlignmentAutoStop,
+    );
     
-    // Audio feedback every 1 second
-    _audioTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    // Audio feedback timer
+    _audioTimer = Timer.periodic(const Duration(milliseconds: 600), (timer) {
       if (_currentAlignment != null) {
-        _audio.speakInstruction(_currentInstruction);
-        _addLog(AudioService.getInstructionText(_currentInstruction));
+        _provideAudioFeedback();
       }
     });
+  }
+  
+  void _provideAudioFeedback() {
+    // If aligned, limit dings
+    if (_currentInstruction == AlignmentInstruction.aligned) {
+      if (_simulation.alignedDingCount > _lastSpokenDingCount && 
+          _simulation.alignedDingCount <= 3) {
+        _audio.speakInstruction(_currentInstruction);
+        _addLog('${AudioService.getInstructionText(_currentInstruction)} (${_simulation.alignedDingCount}/3)');
+        _lastSpokenDingCount = _simulation.alignedDingCount;
+      }
+    } else {
+      // Not aligned - give regular feedback
+      _lastSpokenDingCount = 0;
+      _audio.speakInstruction(_currentInstruction);
+      _addLog(AudioService.getInstructionText(_currentInstruction));
+    }
+  }
+  
+  void _onAlignmentAutoStop() {
+    setState(() {
+      _isRunning = false;
+    });
+    
+    _audioTimer?.cancel();
+    _addLog('✓ ALIGNMENT COMPLETE - Auto-stopped after 2 seconds aligned');
+    
+    // Final confirmation
+    HapticFeedback.heavyImpact();
+    _audio.speakText('Alignment complete. You may putt.');
   }
   
   void _stopSimulation() {
@@ -75,6 +111,13 @@ class _SimulationScreenState extends State<SimulationScreen> {
     _simulation.stopSimulation();
     _audioTimer?.cancel();
     _addLog('Simulation stopped');
+  }
+  
+  void _toggleAngleVisibility() {
+    setState(() {
+      _showAngle = !_showAngle;
+    });
+    _addLog(_showAngle ? 'Angle visible' : 'Angle hidden (audio-only mode)');
   }
   
   void _addLog(String message) {
@@ -103,6 +146,14 @@ class _SimulationScreenState extends State<SimulationScreen> {
         title: const Text('UWB SIMULATION'),
         backgroundColor: const Color(0xFF000000),
         foregroundColor: const Color(0xFFFFFFFF),
+        actions: [
+          // Toggle angle visibility button in app bar
+          IconButton(
+            onPressed: _toggleAngleVisibility,
+            icon: Icon(_showAngle ? Icons.visibility : Icons.visibility_off),
+            tooltip: _showAngle ? 'Hide angle (test mode)' : 'Show angle',
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -115,10 +166,10 @@ class _SimulationScreenState extends State<SimulationScreen> {
               
               const SizedBox(height: 20),
               
-              // Data Display
-              _buildDataDisplay(),
+              // Data Display (only if showing angle)
+              if (_showAngle) _buildDataDisplay(),
               
-              const SizedBox(height: 20),
+              if (_showAngle) const SizedBox(height: 20),
               
               // Manual Controls
               if (_isRunning && !_autoMode) _buildManualControls(),
@@ -169,13 +220,13 @@ class _SimulationScreenState extends State<SimulationScreen> {
         statusIcon = Icons.arrow_forward;
         break;
       case AlignmentInstruction.rotateLeft:
-        backgroundColor = const Color.fromARGB(255, 204, 0, 0);  // Orange
+        backgroundColor = const Color.fromARGB(255, 204, 0, 0);  // Red
         foregroundColor = const Color(0xFFFFFFFF);
         statusText = '⟵ ROTATE LEFT';
         statusIcon = Icons.rotate_left;
         break;
       case AlignmentInstruction.rotateRight:
-        backgroundColor = const Color.fromARGB(255, 204, 0, 0);  // Orange
+        backgroundColor = const Color.fromARGB(255, 204, 0, 0);  // Red
         foregroundColor = const Color(0xFFFFFFFF);
         statusText = 'ROTATE RIGHT ⟶';
         statusIcon = Icons.rotate_right;
@@ -184,7 +235,7 @@ class _SimulationScreenState extends State<SimulationScreen> {
     
     // Aim description for redundant signaling
     String aimDescription = '';
-    if (angle.abs() > 1) {
+    if (_showAngle && angle.abs() > 1) {
       aimDescription = angle > 0 
           ? '(Currently aimed RIGHT of hole)' 
           : '(Currently aimed LEFT of hole)';
@@ -208,16 +259,27 @@ class _SimulationScreenState extends State<SimulationScreen> {
           
           const SizedBox(height: 12),
           
-          // Angle display
-          Text(
-            '${angle.toStringAsFixed(1)}°',
-            style: TextStyle(
-              fontSize: 48,
-              fontWeight: FontWeight.bold,
-              color: foregroundColor,
-              fontFamily: 'Arial',
+          // Angle display (conditional)
+          if (_showAngle)
+            Text(
+              '${angle.toStringAsFixed(1)}°',
+              style: TextStyle(
+                fontSize: 48,
+                fontWeight: FontWeight.bold,
+                color: foregroundColor,
+                fontFamily: 'Arial',
+              ),
+            )
+          else
+            Text(
+              '---',
+              style: TextStyle(
+                fontSize: 48,
+                fontWeight: FontWeight.bold,
+                color: foregroundColor.withOpacity(0.5),
+                fontFamily: 'Arial',
+              ),
             ),
-          ),
           
           const SizedBox(height: 8),
           
@@ -240,6 +302,27 @@ class _SimulationScreenState extends State<SimulationScreen> {
                 fontSize: 18,
                 color: foregroundColor.withOpacity(0.9),
                 fontFamily: 'Arial',
+              ),
+            ),
+          ],
+          
+          // Audio-only mode indicator
+          if (!_showAngle) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: foregroundColor.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                '🎧 AUDIO-ONLY MODE',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: foregroundColor,
+                  fontFamily: 'Arial',
+                ),
               ),
             ),
           ],
@@ -392,57 +475,111 @@ class _SimulationScreenState extends State<SimulationScreen> {
   }
   
   Widget _buildControlButtons() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Auto mode toggle
-        Container(
-          padding: const EdgeInsets.all(12),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      // Toggle angle visibility button
+      GestureDetector(
+        onTap: _toggleAngleVisibility,
+        child: Container(
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFFF5F5F5),
+            color: _showAngle ? const Color(0xFFF5F5F5) : const Color(0xFF333333),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: const Color(0xFF000000), width: 2),
           ),
           child: Row(
             children: [
-              Checkbox(
-                value: _autoMode,
-                onChanged: _isRunning ? null : (value) {
-                  setState(() {
-                    _autoMode = value ?? false;
-                  });
-                },
-                activeColor: const Color(0xFF000000),
-                checkColor: const Color(0xFFFFFFFF),
-                side: const BorderSide(color: Color(0xFF000000), width: 2),
+              Icon(
+                _showAngle ? Icons.visibility : Icons.visibility_off,
+                color: _showAngle ? const Color(0xFF000000) : const Color(0xFFFFFFFF),
+                size: 28,
               ),
-              const Expanded(
-                child: Text(
-                  'Auto-adjust mode (simulates following instructions)',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Color(0xFF000000),
-                    fontFamily: 'Arial',
-                  ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _showAngle ? 'ANGLE VISIBLE' : 'ANGLE HIDDEN',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: _showAngle ? const Color(0xFF000000) : const Color(0xFFFFFFFF),
+                        fontFamily: 'Arial',
+                      ),
+                    ),
+                    Text(
+                      _showAngle ? 'Tap to hide (audio-only test)' : 'Tap to show angle',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _showAngle ? const Color(0xFF666666) : const Color(0xFFCCCCCC),
+                        fontFamily: 'Arial',
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+              Icon(
+                Icons.touch_app,
+                color: _showAngle ? const Color(0xFF666666) : const Color(0xFFCCCCCC),
+                size: 24,
               ),
             ],
           ),
         ),
-        
-        const SizedBox(height: 16),
-        
-        // Start/Stop button
-        AccessibilityButton(
-          label: _isRunning ? 'STOP SIMULATION' : 'START SIMULATION',
-          semanticsHint: _isRunning ? 'Stop the simulation' : 'Start the simulation',
-          icon: _isRunning ? Icons.stop : Icons.play_arrow,
-          onPressed: _isRunning ? _stopSimulation : _startSimulation,
-          isPrimary: !_isRunning,
+      ),
+      
+      const SizedBox(height: 16),
+      
+      // Auto mode toggle
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F5),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF000000), width: 2),
         ),
-      ],
-    );
-  }
+        child: Row(
+          children: [
+            Checkbox(
+              value: _autoMode,
+              onChanged: _isRunning ? null : (value) {
+                setState(() {
+                  _autoMode = value ?? false;
+                });
+              },
+              activeColor: const Color(0xFF000000),
+              checkColor: const Color(0xFFFFFFFF),
+              side: const BorderSide(color: Color(0xFF000000), width: 2),
+            ),
+            const Expanded(
+              child: Text(
+                'Auto-adjust mode (simulates following instructions)',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Color(0xFF000000),
+                  fontFamily: 'Arial',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      
+      const SizedBox(height: 16),
+      
+      // Start/Stop button
+      AccessibilityButton(
+        label: _isRunning ? 'STOP SIMULATION' : 'START SIMULATION',
+        semanticsHint: _isRunning ? 'Stop the simulation' : 'Start the simulation',
+        icon: _isRunning ? Icons.stop : Icons.play_arrow,
+        onPressed: _isRunning ? _stopSimulation : _startSimulation,
+        isPrimary: !_isRunning,
+      ),
+    ],
+  );
+}
   
   Widget _buildLogDisplay() {
     return Container(

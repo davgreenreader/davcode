@@ -71,6 +71,12 @@ class AudioService {
     }
   }
   
+  /// Speak any custom text (public method)
+  Future<void> speakText(String text) async {
+    await _speak(text);
+    print('🔊 $text');
+  }
+  
   /// Play a nice ding/chime sound for alignment success
   Future<void> _playDingSound() async {
     try {

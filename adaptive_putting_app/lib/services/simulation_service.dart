@@ -9,13 +9,22 @@ class SimulationService {
   final math.Random _random = math.Random();
   
   // Simulation parameters
-  final double _baseline = 0.15; // 15cm between putter sensors
-  final double _baseDistance = 2.5; // ~2.5m to hole
+  final double _baseline = 0.10; // 10cm between putter sensors
+  final double _baseDistance = 3; // ~3m to hole
   
   // Simulated putter state
   double _currentAngle = 25.0; // Start 25 degrees off
   double _targetAngle = 0.0; // Target is aligned (0 degrees)
   bool _userIsAdjusting = false;
+  
+  // Auto-stop tracking
+  DateTime? _alignedSince;
+  int _alignedDingCount = 0;
+  static const int _maxDings = 3;
+  static const Duration _autoStopDelay = Duration(seconds: 2);
+  
+  // Callback for auto-stop
+  Function()? onAutoStop;
   
   final StreamController<PutterAlignment> _alignmentController =
       StreamController<PutterAlignment>.broadcast();
@@ -27,16 +36,23 @@ class SimulationService {
   
   bool get isRunning => _simulationTimer != null;
   double get currentAngle => _currentAngle;
+  int get alignedDingCount => _alignedDingCount;
+  bool get isAligned => _alignedSince != null;
   
   /// Start the simulation
-  void startSimulation({bool autoAdjust = false}) {
+  void startSimulation({bool autoAdjust = false, Function()? onAutoStop}) {
     _userIsAdjusting = autoAdjust;
+    this.onAutoStop = onAutoStop;
+    
+    // Reset tracking
+    _alignedSince = null;
+    _alignedDingCount = 0;
     
     // Reset to starting position
     _currentAngle = 20.0 + _random.nextDouble() * 10; // Random 20-30 degrees
     if (_random.nextBool()) _currentAngle = -_currentAngle; // Random direction
     
-    _simulationTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+    _simulationTimer = Timer.periodic(const Duration(milliseconds: 400), (timer) {
       _updateSimulation();
     });
   }
@@ -45,18 +61,28 @@ class SimulationService {
   void stopSimulation() {
     _simulationTimer?.cancel();
     _simulationTimer = null;
+    _alignedSince = null;
+    _alignedDingCount = 0;
   }
   
   /// Simulate user rotating putter left
   void rotateLeft() {
     _currentAngle -= 3.0 + _random.nextDouble() * 2; // Rotate 3-5 degrees
+    _resetAlignedTracking(); // User moved, reset alignment tracking
     _emitCurrentState();
   }
   
   /// Simulate user rotating putter right
   void rotateRight() {
     _currentAngle += 3.0 + _random.nextDouble() * 2; // Rotate 3-5 degrees
+    _resetAlignedTracking(); // User moved, reset alignment tracking
     _emitCurrentState();
+  }
+  
+  /// Reset aligned tracking when user moves
+  void _resetAlignedTracking() {
+    _alignedSince = null;
+    _alignedDingCount = 0;
   }
   
   /// Main simulation update
@@ -90,7 +116,47 @@ class SimulationService {
       baseline: _baseline,
     );
     
+    // Check for aligned state and auto-stop
+    _checkAlignedAutoStop(alignment);
+    
     _alignmentController.add(alignment);
+  }
+  
+  /// Check if aligned for 2 seconds and trigger auto-stop
+  void _checkAlignedAutoStop(PutterAlignment alignment) {
+    // Use the isAligned getter from PutterAlignment
+    bool aligned = alignment.isAligned;
+    
+    if (aligned) {
+      // Start tracking if just became aligned
+      if (_alignedSince == null) {
+        _alignedSince = DateTime.now();
+        _alignedDingCount = 1; // First ding
+      } else {
+        // Increment ding count based on time
+        Duration alignedDuration = DateTime.now().difference(_alignedSince!);
+        
+        // One ding per ~600ms, max 3 dings
+        int expectedDings = (alignedDuration.inMilliseconds / 600).floor() + 1;
+        if (expectedDings > _alignedDingCount && _alignedDingCount < _maxDings) {
+          _alignedDingCount = expectedDings.clamp(1, _maxDings);
+        }
+        
+        // Check if we should auto-stop
+        if (alignedDuration >= _autoStopDelay) {
+          _triggerAutoStop();
+        }
+      }
+    } else {
+      // Lost alignment, reset tracking
+      _resetAlignedTracking();
+    }
+  }
+  
+  /// Trigger the auto-stop
+  void _triggerAutoStop() {
+    stopSimulation();
+    onAutoStop?.call();
   }
   
   /// Convert angle to simulated UWB distance measurements
