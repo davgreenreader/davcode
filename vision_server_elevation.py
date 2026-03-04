@@ -55,12 +55,12 @@ def vision_loop():
         # Calculate screen center for elevation math
         frame_height, frame_width = frame.shape[:2]
         screen_center_y = frame_height // 2
-        
-        # Draw the horizontal center line
-        cv2.line(frame, (0, screen_center_y), (frame_width, screen_center_y), (255, 255, 255), 1)
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         corners, ids, rejected = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+
+        # Draw the horizontal center line
+        cv2.line(frame, (0, screen_center_y), (frame_width, screen_center_y), (255, 255, 255), 1)
 
         if ids is not None:
             aruco.drawDetectedMarkers(frame, corners, ids)
