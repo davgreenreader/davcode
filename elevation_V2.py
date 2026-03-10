@@ -61,7 +61,7 @@ aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
 aruco_params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
 
-print("System active. Awaiting IMU integration.")
+print("System active.")
 
 while not quit_app:
     ret, frame = cap.read()
