@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "ElevationReader",
+    "slug": "elevationreader",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "elevationreader",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.davcode.elevationreader",
+      "infoPlist": {
+        "NSCameraUsageDescription": "ElevationReader needs camera access to detect ArUco markers and measure ground elevation.",
+        "NSMotionUsageDescription": "ElevationReader uses motion sensors to determine putter tilt for accurate elevation readings."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png",
+        "backgroundColor": "#1a2e1a"
+      },
+      "package": "com.davcode.elevationreader",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "ElevationReader needs camera access to detect ArUco markers.",
+          "enableMicrophonePermission": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "backgroundColor": "#1a2e1a"
+    }
+  }
+}
