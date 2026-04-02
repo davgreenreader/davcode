@@ -1,12 +1,15 @@
-// Mirrors calibration constants from elevation_V2.py
+// Processing resolution
+export const PROCESS_WIDTH = 320;
+export const PROCESS_HEIGHT = 240;
 
 export const CALIBRATION_PIXEL_WIDTH = 185.0;
 export const KNOWN_DISTANCE_CM = 60.96; // 24 inches
 export const KNOWN_WIDTH_CM = 10.0;
-export const FOCAL_LENGTH = (CALIBRATION_PIXEL_WIDTH * KNOWN_DISTANCE_CM) / KNOWN_WIDTH_CM;
+// Base focal length at 640px calibration width
+export const FOCAL_LENGTH_BASE =
+  (CALIBRATION_PIXEL_WIDTH * KNOWN_DISTANCE_CM) / KNOWN_WIDTH_CM;
+// Legacy scaled value kept for reference; use FOCAL_LENGTH_BASE * (frameW / 640) at runtime
+export const FOCAL_LENGTH =
+  FOCAL_LENGTH_BASE * (PROCESS_WIDTH / 640.0);
 
-// Physical hardware dimensions (measure and update these)
-export const CAMERA_HEIGHT_CM = 20.0; // Height of camera lens off the ground
-export const TAG_HEIGHT_CM = 20.0;    // Height of ArUco tag center off the ground
-
-export const ARUCO_MARKER_ID = 121;   // Target marker ID (DICT_6X6_250)
+export const ARUCO_MARKER_ID = 121;
