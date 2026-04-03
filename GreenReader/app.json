@@ -26,6 +26,9 @@
       "eas": {
         "projectId": "878c3d81-018b-4c22-9075-57d467bdecb8"
       }
+    },
+    "android": {
+      "package": "com.greenreader.app"
     }
   }
 }
