@@ -11,28 +11,51 @@ import { Accelerometer } from 'expo-sensors';
 import * as Speech from 'expo-speech';
 
 // ─── Calibration constants ────────────────────────────────────────────────────
-// K_BREAK: inches of break per foot of putt per degree of side slope (stimp 9.5)
-// Derived from: 9ft putt, 0.687° side (=1.2%), 0.401° uphill → 5.8" (competitor)
-const K_BREAK = 1.05;
+// K_BREAK: inches per foot per degree of side slope (PGA/on-course calibrated)
+const K_BREAK = 0.55;
 
-// K_GRADE: how much one degree of up/downhill modifies break
-// Uphill putts break less (ball faster through zone); downhill putts break more
-const K_GRADE = 0.26;
+// Zone caps — hard upper limits on aim offset to prevent sensor noise blowouts
+// ≤6ft: scales linearly with distance (dist × 0.5) so a 2ft putt caps at 1",
+//        a 4ft putt caps at 2", and a 6ft putt caps at 3" (just inside cup edge)
+// 6–20ft: fixed 18" cap
+// Green speed setting (slow/medium/fast) will scale these in a future update
+const CAP_MID = 18.0; // 6–20ft
+// 20+ft: no aim inches output (lag zone — pace is the priority)
 
-// K_POWER: divisor for effective-distance formula (degrees)
-// Derived from: 0.401° uphill → 113% pace → k = 0.401 / 0.13 = 3.085
-const K_POWER = 3.085;
+// Pitch modifier constants (applied to aim offset AFTER zone cap)
+// Uphill: ball moves faster through break zone → less break
+// Downhill: ball slows sooner → more break
+const PITCH_UP_FACTOR   = 0.07;  // reduces break per degree uphill
+const PITCH_UP_FLOOR    = 0.65;  // max 35% reduction
+const PITCH_DOWN_FACTOR = 0.12;  // increases break per degree downhill
+const PITCH_DOWN_CEIL   = 1.65;  // max 65% increase
 
-// Experts: play 0.75° more break on downhill to allow ball to die in hole
-const DOWNHILL_BREAK_BONUS = 0.75;
+// Power cue: only announce when effective distance differs by ≥10%
+const POWER_THRESHOLD = 0.10;
+// Formula: effective_dist = dist + (pitch_deg × dist × 0.045)
+// Positive pitch = uphill → adds distance; negative pitch = downhill → subtracts
+const POWER_FACTOR = 0.045;
 
-// Threshold below which side slope is called "Straight" (phone noise floor)
+// Noise thresholds — readings below these are treated as flat/straight
 const STRAIGHT_THRESHOLD = 0.5; // degrees
-const FLAT_THRESHOLD = 0.5;     // degrees
+const FLAT_THRESHOLD     = 0.5; // degrees
 
-// Samples to average — 30 × 100 ms = 3 seconds (reduces sensor noise)
+// Lag zone threshold
+const LAG_THRESHOLD = 20; // feet
+
+// Samples to average — 30 × 100ms = 3 seconds (reduces sensor noise)
 const SAMPLE_COUNT = 30;
 // ─────────────────────────────────────────────────────────────────────────────
+
+type ReadingResult = {
+  aimInches: number;
+  aimDir: 'LEFT' | 'RIGHT' | null;
+  breakDir: string;
+  slopeDir: string;
+  powerCueFt: number | null;
+  isLag: boolean;
+  isShortPutt: boolean; // ≤6ft — use "lean" language
+};
 
 export default function GreenReader() {
   const [rollAngle, setRollAngle] = useState(0);
@@ -41,11 +64,7 @@ export default function GreenReader() {
   const [status, setStatus] = useState('Place phone flat on green');
   const [isReading, setIsReading] = useState(false);
   const [hasReading, setHasReading] = useState(false);
-
-  const [breakDirection, setBreakDirection] = useState('--');
-  const [slopeDirection, setSlopeDirection] = useState('--');
-  const [breakInches, setBreakInches] = useState(0);
-  const [effectiveDistance, setEffectiveDistance] = useState(0);
+  const [result, setResult] = useState<ReadingResult | null>(null);
 
   // =====================
   // READ SLOPE
@@ -54,6 +73,7 @@ export default function GreenReader() {
     setIsReading(true);
     setStatus('Reading... hold still (3 sec)');
     setHasReading(false);
+    setResult(null);
 
     let sumX = 0;
     let sumY = 0;
@@ -69,12 +89,15 @@ export default function GreenReader() {
       if (count >= SAMPLE_COUNT) {
         subscription.remove();
 
-        const avgRoll = (sumX / SAMPLE_COUNT) * 90;
+        const avgRoll  = (sumX / SAMPLE_COUNT) * 90;
         const avgPitch = (sumY / SAMPLE_COUNT) * 90;
 
         setRollAngle(avgRoll);
         setPitchAngle(avgPitch);
-        processReading(avgRoll, avgPitch);
+
+        const r = processReading(avgRoll, avgPitch);
+        setResult(r);
+        speakReading(r, parseFloat(distance) || 10);
 
         setStatus('Reading complete!');
         setIsReading(false);
@@ -83,93 +106,105 @@ export default function GreenReader() {
     });
   };
 
-  const processReading = (roll: number, pitch: number) => {
+  // =====================
+  // ALGORITHM
+  // =====================
+  const processReading = (roll: number, pitch: number): ReadingResult => {
     const dist = parseFloat(distance) || 10;
-
-    // Raw angle magnitudes in degrees
-    const sideDegs = Math.abs(roll);
+    const sideDegs   = Math.abs(roll);
     const updownDegs = Math.abs(pitch);
+    const isLag      = dist > LAG_THRESHOLD;
 
-    // ── Directions ──────────────────────────────────────────────────────────
-    // roll > 0 → green tilts left-to-right → ball breaks right → AIM LEFT
-    // roll < 0 → green tilts right-to-left → ball breaks left  → AIM RIGHT
+    // ── Break direction ──────────────────────────────────────────────────────
+    // roll > 0 → green slopes left-to-right → ball curves right → AIM LEFT
+    // roll < 0 → green slopes right-to-left → ball curves left  → AIM RIGHT
     let breakDir: string;
     if (sideDegs < STRAIGHT_THRESHOLD) breakDir = 'Straight';
-    else if (roll > 0) breakDir = 'Left to Right'; // ball curves right
-    else breakDir = 'Right to Left';               // ball curves left
+    else if (roll > 0)                 breakDir = 'Left to Right';
+    else                               breakDir = 'Right to Left';
 
-    // pitch > 0 → Downhill  (negative y-accel when top of phone is low)
-    // pitch < 0 → Uphill
+    // ── Slope direction ──────────────────────────────────────────────────────
+    // pitch > 0 → Downhill; pitch < 0 → Uphill
     let slopeDir: string;
     if (updownDegs < FLAT_THRESHOLD) slopeDir = 'Flat';
-    else if (pitch > 0) slopeDir = 'Downhill';
-    else slopeDir = 'Uphill';
+    else if (pitch > 0)              slopeDir = 'Downhill';
+    else                             slopeDir = 'Uphill';
 
-    // ── Break calculation ────────────────────────────────────────────────────
-    // Downhill experts tip: play 0.75° more break so ball dies in the hole
-    const effectiveSideDegs =
-      slopeDir === 'Downhill' ? sideDegs + DOWNHILL_BREAK_BONUS : sideDegs;
+    // ── Aim offset (short/mid range only) ───────────────────────────────────
+    let aimInches = 0;
+    let aimDir: 'LEFT' | 'RIGHT' | null = null;
 
-    // Grade factor: uphill → less break, downhill → more break
-    let gradeFactor = 1;
-    if (slopeDir === 'Uphill') {
-      gradeFactor = 1 / (1 + K_GRADE * updownDegs);
-    } else if (slopeDir === 'Downhill') {
-      gradeFactor = 1 + K_GRADE * updownDegs;
+    if (!isLag && breakDir !== 'Straight') {
+      // Step 1: Raw break
+      const raw = dist * sideDegs * K_BREAK;
+
+      // Step 2: Zone cap (BEFORE pitch modifier)
+      const cap    = dist <= 6 ? dist * 0.5 : CAP_MID;
+      const capped = Math.min(raw, cap);
+
+      // Step 3: Pitch modifier (applied AFTER cap so downhill can't exceed cap)
+      let pitchMod = 1.0;
+      if (slopeDir === 'Uphill') {
+        pitchMod = Math.max(1.0 - updownDegs * PITCH_UP_FACTOR, PITCH_UP_FLOOR);
+      } else if (slopeDir === 'Downhill') {
+        pitchMod = Math.min(1.0 + updownDegs * PITCH_DOWN_FACTOR, PITCH_DOWN_CEIL);
+      }
+
+      aimInches = capped * pitchMod;
+      aimDir    = breakDir === 'Left to Right' ? 'LEFT' : 'RIGHT';
     }
 
-    const calcBreakInches =
-      breakDir === 'Straight' ? 0 : dist * effectiveSideDegs * K_BREAK * gradeFactor;
+    // ── Power cue ────────────────────────────────────────────────────────────
+    // effective_dist = dist + (pitch_deg × dist × POWER_FACTOR)
+    // positive pitch (uphill) adds distance; negative (downhill) subtracts
+    const effectiveDist = Math.round(dist - pitch * dist * POWER_FACTOR);
+    const diffPct       = Math.abs(effectiveDist - dist) / dist;
+    const powerCueFt    = diffPct >= POWER_THRESHOLD ? effectiveDist : null;
 
-    // ── Effective distance for power ─────────────────────────────────────────
-    // Uphill needs more pace; downhill needs less. Clamped to sane range.
-    let effectiveDist = dist;
-    if (slopeDir === 'Uphill') {
-      effectiveDist = dist * (1 + updownDegs / K_POWER);
-    } else if (slopeDir === 'Downhill') {
-      effectiveDist = dist * (1 - updownDegs / K_POWER);
-    }
-    // Clamp: at minimum 25% of distance, at maximum 350%
-    effectiveDist = Math.max(dist * 0.25, Math.min(dist * 3.5, effectiveDist));
-
-    setBreakDirection(breakDir);
-    setSlopeDirection(slopeDir);
-    setBreakInches(calcBreakInches);
-    setEffectiveDistance(effectiveDist);
-
-    speakReading(dist, slopeDir, breakDir, calcBreakInches, effectiveDist);
+    return { aimInches, aimDir, breakDir, slopeDir, powerCueFt, isLag, isShortPutt: dist <= 6 };
   };
 
   // =====================
   // SPEECH
   // =====================
-  const speakReading = (
-    dist: number,
-    slope: string,
-    breakDir: string,
-    breakIn: number,
-    effectiveDist: number
-  ) => {
-    let speech = `${Math.round(dist)} foot putt.`;
+  const speakReading = (r: ReadingResult, dist: number) => {
+    const parts: string[] = [];
 
-    if (breakDir === 'Straight') {
-      speech += ' Straight putt.';
+    // 1. Distance
+    parts.push(`${Math.round(dist)} foot putt.`);
+
+    // 2. Uphill / downhill (skip if flat)
+    if (r.slopeDir !== 'Flat') {
+      parts.push(`${r.slopeDir}.`);
+    }
+
+    // 3. Break direction + 4. Aim point
+    if (r.isLag) {
+      parts.push('Straight putt. Focus on pace.');
+    } else if (r.breakDir === 'Straight') {
+      parts.push('Straight putt.');
     } else {
-      // aim direction is opposite of break direction
-      const aimDir = breakDir === 'Left to Right' ? 'left' : 'right';
-      speech += ` Aim ${breakIn.toFixed(1)} inches ${aimDir}.`;
+      const dir = r.aimDir === 'LEFT' ? 'left' : 'right';
+      parts.push(`Breaking ${dir}.`);
+      if (r.isShortPutt) {
+        parts.push(r.aimInches < 1
+          ? `Barely lean ${dir}.`
+          : `Lean about ${r.aimInches.toFixed(1)} inches ${dir}.`);
+      } else {
+        parts.push(`Aim ${r.aimInches.toFixed(1)} inches ${dir} of the cup.`);
+      }
     }
 
-    if (slope === 'Uphill' || slope === 'Downhill') {
-      speech += ` ${slope}. Treat as a ${Math.round(effectiveDist)} foot putt for pace.`;
+    // 5. Power cue (if triggered)
+    if (r.powerCueFt !== null) {
+      parts.push(`Treat as a ${r.powerCueFt} foot putt.`);
     }
 
-    Speech.speak(speech, { language: 'en', pitch: 1.0, rate: 0.85 });
+    Speech.speak(parts.join(' '), { language: 'en', pitch: 1.0, rate: 0.85 });
   };
 
   const speakAgain = () => {
-    const dist = parseFloat(distance) || 10;
-    speakReading(dist, slopeDirection, breakDirection, breakInches, effectiveDistance);
+    if (result) speakReading(result, parseFloat(distance) || 10);
   };
 
   // =====================
@@ -178,28 +213,52 @@ export default function GreenReader() {
   const resetAll = () => {
     setRollAngle(0);
     setPitchAngle(0);
-    setBreakDirection('--');
-    setSlopeDirection('--');
-    setBreakInches(0);
-    setEffectiveDistance(0);
+    setResult(null);
     setStatus('Place phone flat on green');
     setHasReading(false);
   };
 
   // =====================
-  // RENDER
+  // RENDER HELPERS
   // =====================
-  // Left-to-Right break → ball curves right → AIM LEFT
-  // Right-to-Left break → ball curves left  → AIM RIGHT
-  const aimLabel =
-    breakDirection === 'Left to Right'
-      ? 'LEFT'
-      : breakDirection === 'Right to Left'
-      ? 'RIGHT'
-      : null;
+  const renderResult = () => {
+    if (!hasReading || !result) {
+      return <Text style={styles.placeholderText}>Read the green to see your line</Text>;
+    }
 
-  const showPower =
-    hasReading && (slopeDirection === 'Uphill' || slopeDirection === 'Downhill');
+    if (result.isLag) {
+      return (
+        <>
+          <Text style={styles.lagText}>STRAIGHT</Text>
+          <Text style={styles.breakSub}>{result.slopeDir} · Focus on pace</Text>
+        </>
+      );
+    }
+
+    // Short / mid range — show aim inches
+    if (result.breakDir === 'Straight') {
+      return (
+        <>
+          <Text style={styles.breakInches}>STRAIGHT</Text>
+          <Text style={styles.breakSub}>{result.slopeDir}</Text>
+        </>
+      );
+    }
+
+    const aimLabel = result.isShortPutt
+      ? `LEAN ${result.aimDir}`
+      : result.aimDir!;
+
+    return (
+      <>
+        <Text style={styles.breakInches}>{result.aimInches.toFixed(1)}"</Text>
+        <Text style={styles.aimLabel}>{aimLabel}</Text>
+        <Text style={styles.breakSub}>
+          {result.slopeDir} · {result.breakDir}
+        </Text>
+      </>
+    );
+  };
 
   return (
     <ScrollView style={styles.container}>
@@ -230,32 +289,17 @@ export default function GreenReader() {
         </TouchableOpacity>
       </View>
 
-      {/* BREAK RESULT */}
+      {/* RESULT */}
       <View style={styles.resultBox}>
-        {!hasReading ? (
-          <Text style={styles.placeholderText}>Read the green to see your line</Text>
-        ) : aimLabel ? (
-          <>
-            <Text style={styles.breakInches}>{breakInches.toFixed(1)}"</Text>
-            <Text style={styles.aimLabel}>{aimLabel}</Text>
-            <Text style={styles.breakSub}>
-              {slopeDirection} · {breakDirection}
-            </Text>
-          </>
-        ) : (
-          <>
-            <Text style={styles.breakInches}>STRAIGHT</Text>
-            <Text style={styles.breakSub}>{slopeDirection}</Text>
-          </>
-        )}
+        {renderResult()}
       </View>
 
-      {/* POWER RECOMMENDATION */}
-      {showPower && (
+      {/* POWER CUE */}
+      {hasReading && result?.powerCueFt !== null && result?.powerCueFt !== undefined && (
         <View style={styles.powerBox}>
           <Text style={styles.powerLabel}>PACE</Text>
           <Text style={styles.powerValue}>
-            Treat as a {Math.round(effectiveDistance)} ft putt
+            Treat as a {result.powerCueFt} ft putt
           </Text>
         </View>
       )}
@@ -293,22 +337,25 @@ export default function GreenReader() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#000000',
     padding: 15,
     paddingTop: 50,
   },
   title: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: 'bold',
     color: '#ffffff',
     textAlign: 'center',
     marginBottom: 15,
+    letterSpacing: 2,
   },
   phaseBox: {
-    backgroundColor: '#16213e',
+    backgroundColor: '#111111',
     borderRadius: 12,
     padding: 15,
     marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#333333',
   },
   inputRow: {
     flexDirection: 'row',
@@ -316,99 +363,116 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   inputLabel: {
-    fontSize: 16,
+    fontSize: 18,
+    fontWeight: 'bold',
     color: '#ffffff',
     marginRight: 10,
   },
   textInput: {
     flex: 1,
     backgroundColor: '#ffffff',
-    padding: 10,
+    padding: 12,
     borderRadius: 8,
-    fontSize: 18,
+    fontSize: 22,
+    fontWeight: 'bold',
     textAlign: 'center',
   },
   resultBox: {
-    backgroundColor: '#16213e',
+    backgroundColor: '#111111',
     borderRadius: 12,
-    padding: 24,
+    padding: 28,
     marginBottom: 12,
     alignItems: 'center',
-    minHeight: 160,
+    minHeight: 180,
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#333333',
   },
   placeholderText: {
     fontSize: 16,
-    color: '#555577',
+    color: '#666666',
     fontStyle: 'italic',
   },
-  breakInches: {
-    fontSize: 56,
+  // Lag zone STRAIGHT — smaller to fit on one line
+  lagText: {
+    fontSize: 48,
     fontWeight: 'bold',
-    color: '#ffffff',
-    lineHeight: 64,
+    color: '#FFD700',
+    lineHeight: 56,
+  },
+  // Short/mid range — bright yellow for sunlight readability
+  breakInches: {
+    fontSize: 72,
+    fontWeight: 'bold',
+    color: '#FFD700',
+    lineHeight: 80,
   },
   aimLabel: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: 'bold',
-    color: '#e94560',
+    color: '#ffffff',
     marginTop: 4,
   },
   breakSub: {
-    fontSize: 14,
-    color: '#888888',
-    marginTop: 8,
+    fontSize: 16,
+    color: '#aaaaaa',
+    marginTop: 10,
+    fontWeight: '600',
   },
+  // Power cue — high contrast yellow-on-dark
   powerBox: {
-    backgroundColor: '#0f3460',
+    backgroundColor: '#1a1a00',
     borderRadius: 12,
-    padding: 20,
+    padding: 22,
     marginBottom: 12,
     alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFD700',
   },
   powerLabel: {
-    fontSize: 12,
-    color: '#6688aa',
+    fontSize: 13,
+    color: '#FFD700',
     marginBottom: 4,
     fontWeight: 'bold',
-    letterSpacing: 1,
+    letterSpacing: 2,
   },
   powerValue: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: 'bold',
-    color: '#ffffff',
+    color: '#FFD700',
   },
   rawText: {
     fontSize: 11,
-    color: '#444466',
+    color: '#333355',
     textAlign: 'center',
     marginBottom: 12,
   },
   button: {
-    padding: 16,
-    borderRadius: 10,
+    padding: 20,
+    borderRadius: 12,
     alignItems: 'center',
     marginVertical: 6,
   },
   buttonDisabled: {
-    opacity: 0.4,
+    opacity: 0.35,
   },
   readButton: {
-    backgroundColor: '#e94560',
+    backgroundColor: '#cc0000',
   },
   speakButton: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#006600',
   },
   resetButton: {
-    backgroundColor: '#555555',
+    backgroundColor: '#333333',
   },
   buttonText: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#ffffff',
+    letterSpacing: 1,
   },
   statusText: {
-    fontSize: 13,
+    fontSize: 14,
     color: '#888888',
     textAlign: 'center',
     marginVertical: 8,
