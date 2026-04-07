@@ -17,7 +17,7 @@ import {
 import { useRunOnJS, useSharedValue } from 'react-native-worklets-core';
 
 import { AlignmentOverlay, AlignmentStatus } from '@/components/alignment-overlay';
-import { ARUCO_MARKER_ID, KNOWN_WIDTH_CM, FOCAL_LENGTH_BASE } from '@/constants/calibration';
+import { ARUCO_MARKER_ID, KNOWN_WIDTH_CM, FOCAL_LENGTH_BASE, DIST_CORR_SCALE, DIST_CORR_OFFSET } from '@/constants/calibration';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CM_PER_FOOT = 30.48;
@@ -25,15 +25,23 @@ const SPEECH_INTERVAL_MS = 3000;   // ms before repeating the same cue
 const CENTERED_HOLD_MS = 2500;    // ms to hold centered before declaring aligned
 const SMOOTH_BUFFER_SIZE = 4;     // Frames to average for stable position
 
+// ─── Auto-zoom constants ──────────────────────────────────────────────────────
+// Steps the camera through discrete zoom levels based on marker pixel size.
+// At 10cm marker / 640px frame: expect ~37px at 10ft, ~18px at 20ft, ~7px at 50ft.
+const ZOOM_STEPS = [1.0, 1.5, 2.0, 3.0];
+const ZOOM_UP_PX   = 28;   // step zoom in  when marker < this many px
+const ZOOM_DOWN_PX = 80;   // step zoom out when marker > this many px
+const ZOOM_DEBOUNCE_MS = 1200; // min ms between zoom changes (prevents oscillation)
+
 // ─── Native ArUco plugin (VisionCamera Frame Processor) ──────────────────────
 const arucoPlugin = VisionCameraProxy.initFrameProcessorPlugin('detectAruco', {});
 
 // ─── Speech cues ──────────────────────────────────────────────────────────────
 const SPEECH_CUE: Record<AlignmentStatus, string> = {
   'MOVE LEFT':   'Move left',
-  'SLIGHTLY LEFT': 'Slightly left',
+  'SLIGHT LEFT': 'Slight left',
   'CENTERED':    'Centered',
-  'SLIGHTLY RIGHT':'Slightly right',
+  'SLIGHT RIGHT': 'Slight right',
   'MOVE RIGHT':  'Move right',
   'SEARCHING':   '',
 };
@@ -80,12 +88,16 @@ export default function FlagFinderScreen() {
   const centeredSince    = useRef<number | null>(null);
   const smoothBuf        = useRef<number[]>([]);
   const zoomRef          = useRef(1.0);
+  const zoomStepIdx      = useRef(0);
+  const lastZoomChange   = useRef(0);
+  const missedFrames     = useRef(0);
 
-  const [isScanning, setIsScanning] = useState(false);
-  const [isDone, setIsDone]         = useState(false);
-  const [zoom, setZoom]             = useState(1.0);
-  const [frameState, setFrameState] = useState<FrameState>(IDLE_STATE);
-  const [viewSize, setViewSize]     = useState({ width: 0, height: 0 });
+  const [isScanning, setIsScanning]     = useState(false);
+  const [isDone, setIsDone]             = useState(false);
+  const [zoom, setZoom]                 = useState(1.0);
+  const [frameState, setFrameState]     = useState<FrameState>(IDLE_STATE);
+  const [viewSize, setViewSize]         = useState({ width: 0, height: 0 });
+  const [finalDist, setFinalDist]       = useState<number | null>(null);
 
   // ── Called from worklet thread → JS thread ───────────────────────────────
   const processResult = useCallback(
@@ -96,13 +108,18 @@ export default function FlagFinderScreen() {
         const found = result.found as boolean;
 
         if (!found) {
-          smoothBuf.current = [];
-          // Don't reset centeredHits — a brief SEARCHING blip shouldn't undo progress
-          setFrameState((prev) =>
-            prev.status === 'SEARCHING' ? prev : { ...IDLE_STATE }
-          );
+          missedFrames.current += 1;
+          // Only drop to SEARCHING after 8 consecutive missed frames (~0.5s).
+          // This prevents the oscillating SEARCHING flash when detection is spotty at distance.
+          if (missedFrames.current >= 8) {
+            smoothBuf.current = [];
+            setFrameState((prev) =>
+              prev.status === 'SEARCHING' ? prev : { ...IDLE_STATE }
+            );
+          }
           return;
         }
+        missedFrames.current = 0;
 
         const markers = result.markers as Array<Record<string, unknown>>;
         const target  = markers.find((m) => (m.id as number) === ARUCO_MARKER_ID);
@@ -114,6 +131,27 @@ export default function FlagFinderScreen() {
         const frameH     = target.frameHeight as number;
         const corners    = target.corners     as number[][];
 
+        // ── Auto-zoom: step in/out based on marker pixel size ──────────────
+        const nowZoom = Date.now();
+        if (pixelWidth > 5 && nowZoom - lastZoomChange.current > ZOOM_DEBOUNCE_MS) {
+          const idx = zoomStepIdx.current;
+          if (pixelWidth < ZOOM_UP_PX && idx < ZOOM_STEPS.length - 1) {
+            const newIdx  = idx + 1;
+            const newZoom = ZOOM_STEPS[newIdx];
+            zoomStepIdx.current    = newIdx;
+            zoomRef.current        = newZoom;
+            lastZoomChange.current = nowZoom;
+            setZoom(newZoom);
+          } else if (pixelWidth > ZOOM_DOWN_PX && idx > 0) {
+            const newIdx  = idx - 1;
+            const newZoom = ZOOM_STEPS[newIdx];
+            zoomStepIdx.current    = newIdx;
+            zoomRef.current        = newZoom;
+            lastZoomChange.current = nowZoom;
+            setZoom(newZoom);
+          }
+        }
+
         // Smooth Y position
         const buf = smoothBuf.current;
         buf.push(centerY);
@@ -122,10 +160,14 @@ export default function FlagFinderScreen() {
 
         const status = calculateStatus(smoothY, frameH);
 
-        // Distance estimate
+        // Distance estimate — raw formula then empirical linear correction.
+        // Correction fit: actual = 0.837 × raw + 0.908 (from 4-point field test).
         const focalScaled = FOCAL_LENGTH_BASE * (frameW / 640.0);
-        const distFeet = pixelWidth > 5
+        const rawDist = pixelWidth > 5
           ? (focalScaled * zoomRef.current * KNOWN_WIDTH_CM) / pixelWidth / 2 / CM_PER_FOOT
+          : null;
+        const distFeet = rawDist !== null
+          ? rawDist * DIST_CORR_SCALE + DIST_CORR_OFFSET
           : null;
 
         setFrameState({ status, distFeet, corners, frameW, frameH });
@@ -139,7 +181,8 @@ export default function FlagFinderScreen() {
             isActive.value = false;
             setIsScanning(false);
             setIsDone(true);
-            Speech.speak('Aligned! Pivot 90 degrees and set your stance.', { rate: 0.9 });
+            setFinalDist(distFeet);
+            Speech.speak('Aligned! Ready to putt.', { rate: 0.9 });
             return;
           }
         } else {
@@ -188,9 +231,13 @@ export default function FlagFinderScreen() {
     lastSpokenStatus.current = null;
     isBusy.value  = false;
     isActive.value = true;
-    zoomRef.current = 1.0;
+    zoomRef.current        = 1.0;
+    zoomStepIdx.current    = 0;
+    lastZoomChange.current = 0;
+    missedFrames.current   = 0;
     setZoom(1.0);
     setFrameState(IDLE_STATE);
+    setFinalDist(null);
     setIsDone(false);
     setIsScanning(true);
   }, [isBusy, isActive]);
@@ -231,8 +278,8 @@ export default function FlagFinderScreen() {
       <View style={styles.centered}>
         <Text style={styles.titleText}>Flag Finder</Text>
         <Text style={styles.subtitleText}>
-          Stand behind the ball facing the hole.{'\n'}
-          Sweep around slowly to find the pin, listen to audio cues for alignment!
+          Stand in your sideways stance at the ball.{'\n'}
+          Prepare to adjust so that the camera is aligned with the tag.
         </Text>
         <TouchableOpacity style={styles.primaryBtn} onPress={startScan}>
           <Text style={styles.primaryBtnText}>Start</Text>
@@ -246,9 +293,10 @@ export default function FlagFinderScreen() {
     return (
       <View style={styles.centered}>
         <Text style={styles.alignedText}>ALIGNED</Text>
-        <Text style={styles.subtitleText}>
-          Pivot 90 degrees and set up your stance{'\n'}perpendicular to the phone
-        </Text>
+        <Text style={styles.subtitleText}>Ready to putt</Text>
+        {finalDist !== null && (
+          <Text style={styles.finalDistText}>{finalDist.toFixed(1)} ft</Text>
+        )}
         <TouchableOpacity style={styles.primaryBtn} onPress={startScan}>
           <Text style={styles.primaryBtnText}>Scan Again</Text>
         </TouchableOpacity>
@@ -321,6 +369,12 @@ const styles = StyleSheet.create({
     fontSize: 52,
     fontWeight: '800',
     letterSpacing: 3,
+  },
+  finalDistText: {
+    color: '#ffffff',
+    fontSize: 48,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   primaryBtn: {
     backgroundColor: '#4caf50',
