@@ -37,13 +37,16 @@ const ZOOM_DEBOUNCE_MS = 1200; // min ms between zoom changes (prevents oscillat
 const arucoPlugin = VisionCameraProxy.initFrameProcessorPlugin('detectAruco', {});
 
 // ─── Speech cues ──────────────────────────────────────────────────────────────
+// Two-phase guidance:
+//   Phase 1 (coarse) — MOVE LEFT/RIGHT → "Rotate left/right": shuffle feet around the ball
+//   Phase 2 (fine)   — SLIGHT LEFT/RIGHT → "Slight left/right": small foot adjustment to center
 const SPEECH_CUE: Record<AlignmentStatus, string> = {
-  'MOVE LEFT':   'Move left',
-  'SLIGHT LEFT': 'Slight left',
-  'CENTERED':    'Centered',
+  'MOVE LEFT':    'Rotate left',
+  'SLIGHT LEFT':  'Slight left',
+  'CENTERED':     'Centered',
   'SLIGHT RIGHT': 'Slight right',
-  'MOVE RIGHT':  'Move right',
-  'SEARCHING':   '',
+  'MOVE RIGHT':   'Rotate right',
+  'SEARCHING':    '',
 };
 
 // ─── Direction logic (portrait mode) ─────────────────────────────────────────
@@ -52,10 +55,10 @@ const SPEECH_CUE: Record<AlignmentStatus, string> = {
 // frac near 1 → tag on LEFT of screen  → user moves LEFT to center it
 function calculateStatus(centerY: number, frameH: number): AlignmentStatus {
   const frac = (frameH - centerY) / frameH;
-  if (frac < 0.32) return 'MOVE LEFT';
-  if (frac < 0.45) return 'SLIGHT LEFT';
-  if (frac < 0.55) return 'CENTERED';   // tightened from 16% to 10% band
-  if (frac < 0.68) return 'SLIGHT RIGHT';
+  if (frac < 0.30) return 'MOVE LEFT';
+  if (frac < 0.42) return 'SLIGHT LEFT';
+  if (frac < 0.58) return 'CENTERED';   // 16% band — wider tolerance for elderly users
+  if (frac < 0.70) return 'SLIGHT RIGHT';
   return 'MOVE RIGHT';
 }
 
@@ -116,6 +119,20 @@ export default function FlagFinderScreen() {
             setFrameState((prev) =>
               prev.status === 'SEARCHING' ? prev : { ...IDLE_STATE }
             );
+            // Repeat the last known directional cue so the user knows which way to
+            // move back into frame. Skip CENTERED/SEARCHING — no useful direction there.
+            const lastStatus = lastSpokenStatus.current;
+            if (
+              lastStatus &&
+              lastStatus !== 'SEARCHING' &&
+              lastStatus !== 'CENTERED'
+            ) {
+              const nowMissed = Date.now();
+              if (nowMissed - lastSpokenAt.current >= SPEECH_INTERVAL_MS) {
+                Speech.speak(SPEECH_CUE[lastStatus], { rate: 0.85 });
+                lastSpokenAt.current = nowMissed;
+              }
+            }
           }
           return;
         }
@@ -189,15 +206,12 @@ export default function FlagFinderScreen() {
           centeredSince.current = null;
         }
 
-        // Speak immediately when status changes, then wait full interval before repeating same cue
+        // Purely time-based cues: speak current status every SPEECH_INTERVAL_MS.
+        // lastSpokenAt is 0 on first detection (or after tag leaves frame) → fires immediately.
         const cue = SPEECH_CUE[status];
-        if (
-          cue &&
-          (status !== lastSpokenStatus.current ||
-            now - lastSpokenAt.current >= SPEECH_INTERVAL_MS)
-        ) {
-          Speech.speak(cue, { rate: 0.95 });
-          lastSpokenAt.current    = now;
+        if (cue && now - lastSpokenAt.current >= SPEECH_INTERVAL_MS) {
+          Speech.speak(cue, { rate: 0.85 });
+          lastSpokenAt.current     = now;
           lastSpokenStatus.current = status;
         }
       } finally {
@@ -278,8 +292,8 @@ export default function FlagFinderScreen() {
       <View style={styles.centered}>
         <Text style={styles.titleText}>Flag Finder</Text>
         <Text style={styles.subtitleText}>
-          Stand in your sideways stance at the ball.{'\n'}
-          Prepare to adjust so that the camera is aligned with the tag.
+          Stand sideways at the ball in your putting stance, phone pointed at the flag.{'\n\n'}
+          You'll hear <Text style={styles.highlightText}>"Rotate left"</Text> or <Text style={styles.highlightText}>"Rotate right."</Text> {'\n'}Shuffle your feet around the ball until you hear <Text style={styles.highlightText}>"Centered"</Text>.
         </Text>
         <TouchableOpacity style={styles.primaryBtn} onPress={startScan}>
           <Text style={styles.primaryBtnText}>Start</Text>
@@ -363,6 +377,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
     lineHeight: 22,
+  },
+  highlightText: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
   alignedText: {
     color: '#00e676',
