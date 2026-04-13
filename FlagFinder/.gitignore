@@ -24,3 +24,4 @@ ios/
 *.pem
 expo-env.d.ts
 .expo/
+.expo/
