@@ -1,308 +1,132 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useRef, useCallback , useEffect, useState } from 'react';
 import * as Speech from 'expo-speech';
 import {
   StyleSheet,
   View,
   Text,
   TouchableOpacity,
-  Platform,
 } from 'react-native';
-import {
-  Camera,
-  useCameraDevice,
-  useCameraPermission,
-  useFrameProcessor,
-  VisionCameraProxy,
-} from 'react-native-vision-camera';
-import { useRunOnJS, useSharedValue } from 'react-native-worklets-core';
 
 import { AlignmentOverlay, AlignmentStatus } from '@/components/alignment-overlay';
-import { ARUCO_MARKER_ID, KNOWN_WIDTH_CM, FOCAL_LENGTH_BASE, DIST_CORR_SCALE, DIST_CORR_OFFSET } from '@/constants/calibration';
+import { useBluetooth } from '@/hooks/useBluetooth';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const CM_PER_FOOT = 30.48;
-const SPEECH_INTERVAL_MS = 3000;   // ms before repeating the same cue
-const CENTERED_HOLD_MS = 2500;    // ms to hold centered before declaring aligned
-const SMOOTH_BUFFER_SIZE = 4;     // Frames to average for stable position
+// constants for speech and central calibration
+const SPEECH_INTERVAL_MS  = 3000;
+const CENTERED_HOLD_MS    = 2500;
 
-// ─── Auto-zoom constants ──────────────────────────────────────────────────────
-// Steps the camera through discrete zoom levels based on marker pixel size.
-// At 10cm marker / 640px frame: expect ~37px at 10ft, ~18px at 20ft, ~7px at 50ft.
-const ZOOM_STEPS = [1.0, 1.5, 2.0, 3.0];
-const ZOOM_UP_PX   = 28;   // step zoom in  when marker < this many px
-const ZOOM_DOWN_PX = 80;   // step zoom out when marker > this many px
-const ZOOM_DEBOUNCE_MS = 1200; // min ms between zoom changes (prevents oscillation)
-
-// ─── Native ArUco plugin (VisionCamera Frame Processor) ──────────────────────
-const arucoPlugin = VisionCameraProxy.initFrameProcessorPlugin('detectAruco', {});
-
-// ─── Speech cues ──────────────────────────────────────────────────────────────
-// Two-phase guidance:
-//   Phase 1 (coarse) — MOVE LEFT/RIGHT → "Rotate left/right": shuffle feet around the ball
-//   Phase 2 (fine)   — SLIGHT LEFT/RIGHT → "Slight left/right": small foot adjustment to center
 const SPEECH_CUE: Record<AlignmentStatus, string> = {
-  'MOVE LEFT':    'Rotate left',
+  'MOVE LEFT':    'Rotate far left',
   'SLIGHT LEFT':  'Slight left',
   'CENTERED':     'Centered',
   'SLIGHT RIGHT': 'Slight right',
-  'MOVE RIGHT':   'Rotate right',
+  'MOVE RIGHT':   'Rotate far right',
   'SEARCHING':    '',
-};
-
-// ─── Direction logic (portrait mode) ─────────────────────────────────────────
-// Camera frame is landscape. After 90° rotation: frame-Y maps to screen-X.
-// frac near 0 → tag on RIGHT of screen → user moves RIGHT to center it
-// frac near 1 → tag on LEFT of screen  → user moves LEFT to center it
-function calculateStatus(centerY: number, frameH: number): AlignmentStatus {
-  const frac = (frameH - centerY) / frameH;
-  if (frac < 0.30) return 'MOVE LEFT';
-  if (frac < 0.42) return 'SLIGHT LEFT';
-  if (frac < 0.58) return 'CENTERED';   // 16% band — wider tolerance for elderly users
-  if (frac < 0.70) return 'SLIGHT RIGHT';
-  return 'MOVE RIGHT';
-}
-
-interface FrameState {
-  status: AlignmentStatus;
-  distFeet: number | null;
-  corners: number[][] | null;
-  frameW: number;
-  frameH: number;
-}
-
-const IDLE_STATE: FrameState = {
-  status: 'SEARCHING',
-  distFeet: null,
-  corners: null,
-  frameW: 0,
-  frameH: 0,
 };
 
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function FlagFinderScreen() {
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('back');
+  const { bleStatus, alignmentStatus, distFeet, error, connect, disconnect, isConnected } =
+    useBluetooth();
 
-  const isBusy = useSharedValue(false);
-  const isActive = useSharedValue(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isDone, setIsDone]         = useState(false);
+  const [finalDist, setFinalDist]   = useState<number | null>(null);
 
-  const lastSpokenAt     = useRef(0);
-  const lastSpokenStatus = useRef<AlignmentStatus | null>(null);
-  const centeredSince    = useRef<number | null>(null);
-  const smoothBuf        = useRef<number[]>([]);
-  const zoomRef          = useRef(1.0);
-  const zoomStepIdx      = useRef(0);
-  const lastZoomChange   = useRef(0);
-  const missedFrames     = useRef(0);
+  const lastSpokenAt      = useRef(0);
+  const lastSpokenStatus  = useRef<AlignmentStatus | null>(null);
+  const centeredSince     = useRef<number | null>(null);
+  const isActiveRef       = useRef(false);
 
-  const [isScanning, setIsScanning]     = useState(false);
-  const [isDone, setIsDone]             = useState(false);
-  const [zoom, setZoom]                 = useState(1.0);
-  const [frameState, setFrameState]     = useState<FrameState>(IDLE_STATE);
-  const [viewSize, setViewSize]         = useState({ width: 0, height: 0 });
-  const [finalDist, setFinalDist]       = useState<number | null>(null);
+  // handle case where pi camera is centered
+  useEffect(() => {
+    if (!isActiveRef.current || !isConnected) return;
 
-  // ── Called from worklet thread → JS thread ───────────────────────────────
-  const processResult = useCallback(
-    (result: Record<string, unknown>) => {
-      try {
-        if (!isActive.value) return;
+    const now    = Date.now();
+    const status = alignmentStatus;
 
-        const found = result.found as boolean;
-
-        if (!found) {
-          missedFrames.current += 1;
-          // Only drop to SEARCHING after 8 consecutive missed frames (~0.5s).
-          // This prevents the oscillating SEARCHING flash when detection is spotty at distance.
-          if (missedFrames.current >= 8) {
-            smoothBuf.current = [];
-            setFrameState((prev) =>
-              prev.status === 'SEARCHING' ? prev : { ...IDLE_STATE }
-            );
-            // Repeat the last known directional cue so the user knows which way to
-            // move back into frame. Skip CENTERED/SEARCHING — no useful direction there.
-            const lastStatus = lastSpokenStatus.current;
-            if (
-              lastStatus &&
-              lastStatus !== 'SEARCHING' &&
-              lastStatus !== 'CENTERED'
-            ) {
-              const nowMissed = Date.now();
-              if (nowMissed - lastSpokenAt.current >= SPEECH_INTERVAL_MS) {
-                Speech.speak(SPEECH_CUE[lastStatus], { rate: 0.85 });
-                lastSpokenAt.current = nowMissed;
-              }
-            }
-          }
-          return;
-        }
-        missedFrames.current = 0;
-
-        const markers = result.markers as Array<Record<string, unknown>>;
-        const target  = markers.find((m) => (m.id as number) === ARUCO_MARKER_ID);
-        if (!target) return;
-
-        const centerY    = target.centerY    as number;
-        const pixelWidth = target.pixelWidth as number;
-        const frameW     = target.frameWidth  as number;
-        const frameH     = target.frameHeight as number;
-        const corners    = target.corners     as number[][];
-
-        // ── Auto-zoom: step in/out based on marker pixel size ──────────────
-        const nowZoom = Date.now();
-        if (pixelWidth > 5 && nowZoom - lastZoomChange.current > ZOOM_DEBOUNCE_MS) {
-          const idx = zoomStepIdx.current;
-          if (pixelWidth < ZOOM_UP_PX && idx < ZOOM_STEPS.length - 1) {
-            const newIdx  = idx + 1;
-            const newZoom = ZOOM_STEPS[newIdx];
-            zoomStepIdx.current    = newIdx;
-            zoomRef.current        = newZoom;
-            lastZoomChange.current = nowZoom;
-            setZoom(newZoom);
-          } else if (pixelWidth > ZOOM_DOWN_PX && idx > 0) {
-            const newIdx  = idx - 1;
-            const newZoom = ZOOM_STEPS[newIdx];
-            zoomStepIdx.current    = newIdx;
-            zoomRef.current        = newZoom;
-            lastZoomChange.current = nowZoom;
-            setZoom(newZoom);
-          }
-        }
-
-        // Smooth Y position
-        const buf = smoothBuf.current;
-        buf.push(centerY);
-        if (buf.length > SMOOTH_BUFFER_SIZE) buf.shift();
-        const smoothY = buf.reduce((a, b) => a + b, 0) / buf.length;
-
-        const status = calculateStatus(smoothY, frameH);
-
-        // Distance estimate — raw formula then empirical linear correction.
-        // Correction fit: actual = 0.837 × raw + 0.908 (from 4-point field test).
-        const focalScaled = FOCAL_LENGTH_BASE * (frameW / 640.0);
-        const rawDist = pixelWidth > 5
-          ? (focalScaled * zoomRef.current * KNOWN_WIDTH_CM) / pixelWidth / 2 / CM_PER_FOOT
-          : null;
-        const distFeet = rawDist !== null
-          ? rawDist * DIST_CORR_SCALE + DIST_CORR_OFFSET
-          : null;
-
-        setFrameState({ status, distFeet, corners, frameW, frameH });
-
-        const now = Date.now();
-
-        // Hold centered for 2.5s → aligned
-        if (status === 'CENTERED') {
-          if (centeredSince.current === null) centeredSince.current = now;
-          else if (now - centeredSince.current >= CENTERED_HOLD_MS) {
-            isActive.value = false;
-            setIsScanning(false);
-            setIsDone(true);
-            setFinalDist(distFeet);
-            Speech.speak('Aligned! Ready to putt.', { rate: 0.9 });
-            return;
-          }
-        } else {
-          centeredSince.current = null;
-        }
-
-        // Purely time-based cues: speak current status every SPEECH_INTERVAL_MS.
-        // lastSpokenAt is 0 on first detection (or after tag leaves frame) → fires immediately.
-        const cue = SPEECH_CUE[status];
-        if (cue && now - lastSpokenAt.current >= SPEECH_INTERVAL_MS) {
-          Speech.speak(cue, { rate: 0.85 });
-          lastSpokenAt.current     = now;
-          lastSpokenStatus.current = status;
-        }
-      } finally {
-        isBusy.value = false;
+    if (status === 'CENTERED') {
+      if (centeredSince.current === null) centeredSince.current = now;
+      else if (now - centeredSince.current >= CENTERED_HOLD_MS) {
+        isActiveRef.current = false;
+        setIsScanning(false);
+        setIsDone(true);
+        setFinalDist(distFeet);
+        Speech.speak('Aligned! Ready to putt.', { rate: 0.9 });
+        return;
       }
-    },
-    [isBusy, isActive]
-  );
+    } else {
+      centeredSince.current = null;
+    }
 
-  const processResultOnJS = useRunOnJS(processResult, [processResult]);
+    const cue = SPEECH_CUE[status];
+    if (cue && now - lastSpokenAt.current >= SPEECH_INTERVAL_MS) {
+      Speech.speak(cue, { rate: 0.85 });
+      lastSpokenAt.current    = now;
+      lastSpokenStatus.current = status;
+    }
+  }, [alignmentStatus, isConnected, distFeet]);
 
-  // ── Frame processor (runs on worklet thread, every camera frame) ──────────
-  const frameProcessor = useFrameProcessor(
-    (frame) => {
-      'worklet';
-      if (isBusy.value || !isActive.value) return;
-      if (!arucoPlugin) return;
-      isBusy.value = true;
-      // @ts-ignore — native plugin returns NSDictionary bridged to JS object
-      const result = arucoPlugin.call(frame) as Record<string, unknown>;
-      processResultOnJS(result);
-    },
-    [processResultOnJS, isBusy, isActive]
-  );
-
-  // ── Session controls ──────────────────────────────────────────────────────
+  // ── Session controls ───────────────────────────────────────────────────────
   const startScan = useCallback(() => {
-    smoothBuf.current      = [];
-    centeredSince.current  = null;
-    lastSpokenAt.current   = 0;
+    centeredSince.current    = null;
+    lastSpokenAt.current     = 0;
     lastSpokenStatus.current = null;
-    isBusy.value  = false;
-    isActive.value = true;
-    zoomRef.current        = 1.0;
-    zoomStepIdx.current    = 0;
-    lastZoomChange.current = 0;
-    missedFrames.current   = 0;
-    setZoom(1.0);
-    setFrameState(IDLE_STATE);
+    isActiveRef.current      = true;
     setFinalDist(null);
     setIsDone(false);
     setIsScanning(true);
-  }, [isBusy, isActive]);
+    connect();
+  }, [connect]);
 
   const stopScan = useCallback(() => {
-    isActive.value = false;
-    isBusy.value   = false;
+    isActiveRef.current = false;
     setIsScanning(false);
-    setFrameState(IDLE_STATE);
-  }, [isBusy, isActive]);
+    disconnect();
+  }, [disconnect]);
 
-  // ── Permission screen ─────────────────────────────────────────────────────
-  if (!hasPermission) {
+  // ── Connecting / scanning screen ───────────────────────────────────────────
+  if (bleStatus === 'scanning' || bleStatus === 'connecting' || bleStatus === 'requesting_permission') {
     return (
       <View style={styles.centered}>
-        <Text style={styles.titleText}>Camera Access Required</Text>
-        <Text style={styles.subtitleText}>
-          Flag Finder needs your camera to detect the AruCo tag on the flag.
+        <Text style={styles.titleText}>
+          {bleStatus === 'scanning'    ? 'Searching for device…'  :
+           bleStatus === 'connecting'  ? 'Connecting…'            :
+                                         'Requesting permission…'}
         </Text>
-        <TouchableOpacity style={styles.primaryBtn} onPress={requestPermission}>
-          <Text style={styles.primaryBtnText}>Grant Permission</Text>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={stopScan}>
+          <Text style={styles.cancelBtnText}>Cancel</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  if (!device) {
+  // ── Error screen ───────────────────────────────────────────────────────────
+  if (bleStatus === 'error') {
     return (
       <View style={styles.centered}>
-        <Text style={styles.titleText}>No Camera Found</Text>
-      </View>
-    );
-  }
-
-  // ── Idle screen ───────────────────────────────────────────────────────────
-  if (!isScanning && !isDone) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.titleText}>Flag Finder</Text>
-        <Text style={styles.subtitleText}>
-          Stand sideways at the ball in your putting stance, phone pointed at the flag.{'\n\n'}
-          You'll hear <Text style={styles.highlightText}>"Rotate left"</Text> or <Text style={styles.highlightText}>"Rotate right."</Text> {'\n'}Shuffle your feet around the ball until you hear <Text style={styles.highlightText}>"Centered"</Text>.
-        </Text>
+        <Text style={styles.titleText}>Connection Error</Text>
+        <Text style={styles.subtitleText}>{error ?? 'Unknown error'}</Text>
         <TouchableOpacity style={styles.primaryBtn} onPress={startScan}>
-          <Text style={styles.primaryBtnText}>Start</Text>
+          <Text style={styles.primaryBtnText}>Try Again</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  // ── Aligned / done screen ─────────────────────────────────────────────────
+  // Handle case when pi disconnects
+  if (bleStatus === 'disconnected') {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.titleText}>Device Disconnected</Text>
+        <Text style={styles.subtitleText}>The flag device went out of range or was turned off.</Text>
+        <TouchableOpacity style={styles.primaryBtn} onPress={startScan}>
+          <Text style={styles.primaryBtnText}>Reconnect</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Aligned / done screen ──────────────────────────────────────────────────
   if (isDone) {
     return (
       <View style={styles.centered}>
@@ -318,35 +142,39 @@ export default function FlagFinderScreen() {
     );
   }
 
-  // ── Camera scanning screen ────────────────────────────────────────────────
+  // ── Active scanning screen (connected) ────────────────────────────────────
+  if (isScanning && isConnected) {
+    return (
+      <View style={styles.container}>
+        <AlignmentOverlay
+          status={alignmentStatus}
+          distFeet={distFeet}
+          screenWidth={0}
+          screenHeight={0}
+          corners={null}
+          frameW={0}
+          frameH={0}
+        />
+        <TouchableOpacity style={styles.cancelBtn} onPress={stopScan}>
+          <Text style={styles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Idle screen ────────────────────────────────────────────────────────────
   return (
-    <View
-      style={styles.container}
-      onLayout={(e) => {
-        const { width, height } = e.nativeEvent.layout;
-        setViewSize({ width, height });
-      }}>
-      <Camera
-        style={StyleSheet.absoluteFill}
-        device={device}
-        isActive={true}
-        zoom={zoom}
-        frameProcessor={Platform.OS !== 'web' ? frameProcessor : undefined}
-        pixelFormat="yuv"
-      />
-
-      <AlignmentOverlay
-        status={frameState.status}
-        distFeet={frameState.distFeet}
-        screenWidth={viewSize.width}
-        screenHeight={viewSize.height}
-        corners={frameState.corners}
-        frameW={frameState.frameW}
-        frameH={frameState.frameH}
-      />
-
-      <TouchableOpacity style={styles.cancelBtn} onPress={stopScan}>
-        <Text style={styles.cancelBtnText}>Cancel</Text>
+    <View style={styles.centered}>
+      <Text style={styles.titleText}>Flag Finder</Text>
+      <Text style={styles.subtitleText}>
+        Stand sideways at the ball in your putting stance, phone pointed at the flag.{'\n\n'}
+        Youll hear <Text style={styles.highlightText}>Rotate left</Text> or{' '}
+        <Text style={styles.highlightText}>Rotate right.</Text>
+        {'\n'}Shuffle your feet until you hear{' '}
+        <Text style={styles.highlightText}>Centered</Text>.
+      </Text>
+      <TouchableOpacity style={styles.primaryBtn} onPress={startScan}>
+        <Text style={styles.primaryBtnText}>Start</Text>
       </TouchableOpacity>
     </View>
   );
@@ -405,6 +233,14 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
     fontSize: 20,
+  },
+  secondaryBtn: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   cancelBtn: {
     position: 'absolute',
