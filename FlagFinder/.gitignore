@@ -23,5 +23,3 @@ ios/
 .DS_Store
 *.pem
 expo-env.d.ts
-.expo/
-.expo/
