@@ -39,6 +39,14 @@
           "cameraPermissionText": "Flag Finder needs camera access to detect the AruCo tag on the flag.",
           "enableMicrophonePermission": false
         }
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "Flag Finder uses Bluetooth to find and connect to your flag device."
+        }
       ]
     ],
     "experiments": {
