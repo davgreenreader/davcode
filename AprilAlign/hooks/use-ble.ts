@@ -132,7 +132,8 @@ export function useBLE() {
         return;
       }
 
-      if (device?.name !== DEVICE_NAME) return;
+      const deviceName = device?.name ?? device?.localName;
+      if (!device || deviceName !== DEVICE_NAME) return;
 
       // Found it — stop the scan and connect
       clearTimeout(scanTimeoutRef.current!);

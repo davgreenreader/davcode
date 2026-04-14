@@ -18,30 +18,26 @@ const CENTERED_HOLD_MS   = 2500;  // Hold CENTER this long to declare aligned
 // Keys match what main.py sends via BLE (uppercase, after parseTagData trims)
 const DISPLAY_TEXT: Record<string, string> = {
   'FAR LEFT':       'FAR LEFT',
-  'LEFT':           'MOVE LEFT',
+  'LEFT':           'PIVOT LEFT',
   'SLIGHTLY LEFT':  'SLIGHTLY LEFT',
-  '5 LEFT':         'LEAN LEFT',
+  '5 LEFT':         'SLIGHTLY LEFT',
   'CENTER':         'CENTERED',
-  '5 RIGHT':        'LEAN RIGHT',
+  '5 RIGHT':        'SLIGHTLY RIGHT',
   'SLIGHTLY RIGHT': 'SLIGHTLY RIGHT',
-  'RIGHT':          'MOVE RIGHT',
+  'RIGHT':          'PIVOT RIGHT',
   'FAR RIGHT':      'FAR RIGHT',
-  'NO TAG':         'SEARCHING...',
-  'NO_TAG':         'SEARCHING...',
 };
 
 const SPEECH_CUE: Record<string, string> = {
   'FAR LEFT':       'Move far left',
-  'LEFT':           'Move left',
+  'LEFT':           'Pivot left',
   'SLIGHTLY LEFT':  'Slightly left',
   '5 LEFT':         'Slightly left',
   'CENTER':         'Centered',
   '5 RIGHT':        'Slightly right',
   'SLIGHTLY RIGHT': 'Slightly right',
-  'RIGHT':          'Move right',
+  'RIGHT':          'Pivot right',
   'FAR RIGHT':      'Move far right',
-  'NO TAG':         '',
-  'NO_TAG':         '',
 };
 
 // Color per direction zone
@@ -69,11 +65,14 @@ function directionColor(direction: string): string {
 export default function AprilAlignScreen() {
   const { status, tagData, error, connect, disconnect } = useBLE();
 
-  const lastSpokenStatus = useRef<string | null>(null);
-  const lastSpokenAt     = useRef(0);
-  const centeredSince    = useRef<number | null>(null);
+  const lastSpokenStatus  = useRef<string | null>(null);
+  const lastSpokenAt      = useRef(0);
+  const centeredSince     = useRef<number | null>(null);
+  const lastKnownTagData  = useRef<TagData | null>(null);
 
   const [isDone, setIsDone] = useState(false);
+
+  const isNoTag = (d: string) => d === 'NO TAG' || d === 'NO_TAG';
 
   // ── Speech + centered-hold logic ──────────────────────────────────────────
   useEffect(() => {
@@ -85,29 +84,37 @@ export default function AprilAlignScreen() {
     const { direction } = tagData;
     const now = Date.now();
 
-    // Centered hold timer
-    if (direction === 'CENTER') {
-      if (centeredSince.current === null) {
-        centeredSince.current = now;
-      } else if (now - centeredSince.current >= CENTERED_HOLD_MS) {
-        Speech.speak('Aligned! You are centered on the tag.', { rate: 0.9 });
-        setIsDone(true);
-        return;
+    if (!isNoTag(direction)) {
+      // Tag is visible — update last known
+      lastKnownTagData.current = tagData;
+
+      // Centered hold timer
+      if (direction === 'CENTER') {
+        if (centeredSince.current === null) {
+          centeredSince.current = now;
+        } else if (now - centeredSince.current >= CENTERED_HOLD_MS) {
+          Speech.speak('Aligned! You are centered on the tag.', { rate: 0.9 });
+          setIsDone(true);
+          return;
+        }
+      } else {
+        centeredSince.current = null;
       }
-    } else {
-      centeredSince.current = null;
     }
 
-    // Speak immediately on status change, then gate repeats
-    const cue = SPEECH_CUE[direction] ?? '';
-    if (
-      cue &&
-      (direction !== lastSpokenStatus.current ||
-        now - lastSpokenAt.current >= SPEECH_INTERVAL_MS)
-    ) {
+    // Use last known direction for speech when tag is lost
+    const effectiveDirection = isNoTag(direction)
+      ? (lastKnownTagData.current?.direction ?? null)
+      : direction;
+
+    if (!effectiveDirection) return;
+
+    // Speak on a pure time gate — first detection is instant (lastSpokenAt starts at 0)
+    const cue = SPEECH_CUE[effectiveDirection] ?? '';
+    if (cue && now - lastSpokenAt.current >= SPEECH_INTERVAL_MS) {
       Speech.speak(cue, { rate: 0.95 });
-      lastSpokenAt.current    = now;
-      lastSpokenStatus.current = direction;
+      lastSpokenAt.current     = now;
+      lastSpokenStatus.current = effectiveDirection;
     }
   }, [tagData, status]);
 
@@ -193,30 +200,28 @@ export default function AprilAlignScreen() {
   }
 
   // ── Connected / live screen ───────────────────────────────────────────────
-  const direction = tagData?.direction ?? 'NO TAG';
-  const color     = directionColor(direction);
-  const display   = DISPLAY_TEXT[direction] ?? direction;
+  const rawDirection  = tagData?.direction ?? 'NO TAG';
+  const tagLost       = isNoTag(rawDirection);
+  const activeTagData = tagLost ? lastKnownTagData.current : tagData;
+  const direction     = activeTagData?.direction ?? 'NO TAG';
+  const color         = tagLost
+    ? directionColor(direction) + '88'   // dim the color when tag is lost
+    : directionColor(direction);
+  const display = DISPLAY_TEXT[direction] ?? direction;
 
-  const distLabel = tagData?.distance != null
-    ? `${Math.round(tagData.distance)} cm`
+  const distLabel = activeTagData?.distance != null
+    ? `${Math.round(activeTagData.distance)} cm`
     : null;
-
-  const isSearching = direction === 'NO TAG' || direction === 'NO_TAG';
 
   return (
     <View style={styles.container}>
       {/* Status card */}
       <View style={[styles.statusCard, { borderColor: color }]}>
-        {isSearching ? (
-          <>
-            <ActivityIndicator size="small" color="#888" style={{ marginBottom: 12 }} />
-            <Text style={[styles.directionText, { color: '#888' }]}>{display}</Text>
-          </>
-        ) : (
-          <Text style={[styles.directionText, { color }]}>{display}</Text>
+        <Text style={[styles.directionText, { color }]}>{display}</Text>
+        {tagLost && (
+          <Text style={styles.lastKnownLabel}>tag not visible — last known</Text>
         )}
-
-        {distLabel && (
+        {distLabel && !tagLost && (
           <Text style={styles.distanceText}>{distLabel}</Text>
         )}
       </View>
@@ -293,6 +298,13 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '600',
     marginTop: 16,
+  },
+  lastKnownLabel: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 12,
+    letterSpacing: 0.5,
   },
   connectedBadge: {
     flexDirection: 'row',
