@@ -6,6 +6,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  Modal,
+  SafeAreaView,
 } from 'react-native';
 import { Accelerometer } from 'expo-sensors';
 import * as Speech from 'expo-speech';
@@ -71,6 +73,7 @@ export default function GreenReader() {
 
   const [rollAngle, setRollAngle] = useState(0);
   const [pitchAngle, setPitchAngle] = useState(0);
+  const [showIntro, setShowIntro] = useState(true);
   const [distance, setDistance] = useState('10');
   const [status, setStatus] = useState('Place phone flat on green');
   const [isReading, setIsReading] = useState(false);
@@ -222,11 +225,10 @@ export default function GreenReader() {
       if (r.aimCups < 0.4) {
         parts.push('Play it straight.');
       } else {
-        const cupsRounded = Math.round(r.aimCups * 2) / 2; // nearest 0.5
+        const cupsRounded = Math.round(r.aimCups); // nearest integer
         let cupsStr: string;
-        if (cupsRounded === 0.5)      cupsStr = 'half a cup';
-        else if (cupsRounded === 1.0) cupsStr = 'one cup';
-        else                          cupsStr = `${cupsRounded} cups`;
+        if (cupsRounded === 1) cupsStr = 'one cup';
+        else                   cupsStr = `${cupsRounded} cups`;
         parts.push(`Aim ${cupsStr} ${dir}.`);
       }
     }
@@ -290,8 +292,88 @@ export default function GreenReader() {
   const speedColor = { SLOW: '#4488ff', NORMAL: '#FFD700', FAST: '#ff6644' }[greenSpeed];
 
   return (
-    <ScrollView style={styles.container}>
+    <>
+      {/* ── INTRO MODAL ──────────────────────────────────────────────────────── */}
+      <Modal visible={showIntro} animationType="fade" statusBarTranslucent>
+        <SafeAreaView style={introStyles.safe}>
+          <View style={introStyles.container}>
+
+            {/* Title */}
+            <View style={introStyles.titleBlock}>
+              <Text style={introStyles.howTo}>HOW TO USE</Text>
+              <Text style={introStyles.appName}>GREEN READER</Text>
+            </View>
+
+            {/* Placement diagram */}
+            <View style={introStyles.diagramWrapper}>
+              {/* Hole */}
+              <View style={introStyles.diagRow}>
+                <View style={introStyles.iconCell}>
+                  <Text style={introStyles.holeEmoji}>⛳</Text>
+                </View>
+                <Text style={introStyles.rowLabel}>HOLE</Text>
+              </View>
+
+              {/* Short line — 1/3 of total distance */}
+              <View style={introStyles.segRowShort}>
+                <View style={introStyles.segLineShort} />
+                <Text style={introStyles.segFrac}>1/3</Text>
+              </View>
+
+              {/* Phone */}
+              <View style={introStyles.diagRow}>
+                <View style={introStyles.iconCell}>
+                  <View style={introStyles.phoneRect}>
+                    <Text style={introStyles.phoneArrow}>↑</Text>
+                  </View>
+                </View>
+                <View>
+                  <Text style={introStyles.placeLabel}>PLACE PHONE HERE</Text>
+                  <Text style={introStyles.placeSub}>portrait · facing hole</Text>
+                </View>
+              </View>
+
+              {/* Long line — 2/3 of total distance */}
+              <View style={introStyles.segRowLong}>
+                <View style={introStyles.segLineLong} />
+                <Text style={introStyles.segFrac}>2/3</Text>
+              </View>
+
+              {/* Ball */}
+              <View style={introStyles.diagRow}>
+                <View style={introStyles.iconCell}>
+                  <View style={introStyles.ballCircle} />
+                </View>
+                <Text style={introStyles.rowLabel}>YOUR BALL</Text>
+              </View>
+            </View>
+
+            {/* Bottom: silent mode reminder + button */}
+            <View style={introStyles.bottomBlock}>
+              <View style={introStyles.silentBox}>
+                <Text style={introStyles.silentBell}>🔔</Text>
+                <View style={introStyles.silentText}>
+                  <Text style={introStyles.silentTitle}>TURN OFF SILENT MODE</Text>
+                  <Text style={introStyles.silentSub}>Green Reader speaks your read aloud</Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={introStyles.goButton}
+                onPress={() => setShowIntro(false)}
+                accessibilityLabel="Let's Read"
+              >
+                <Text style={introStyles.goButtonText}>LET'S READ →</Text>
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      <ScrollView style={styles.container}>
       <Text style={styles.title}>GREEN READER</Text>
+      <Text style={styles.placementHint}>Place phone 2/3 of the way from ball to hole</Text>
 
       {/* INPUT + READ */}
       <View style={styles.phaseBox}>
@@ -366,6 +448,7 @@ export default function GreenReader() {
 
       <View style={{ height: 50 }} />
     </ScrollView>
+    </>
   );
 }
 
@@ -383,6 +466,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 15,
     letterSpacing: 2,
+  },
+  placementHint: {
+    fontSize: 13,
+    color: '#888888',
+    textAlign: 'center',
+    marginBottom: 14,
+    fontStyle: 'italic',
   },
   phaseBox: {
     backgroundColor: '#111111',
@@ -418,9 +508,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingTop: 22,
     paddingBottom: 38, // extra bottom room for the speed badge
-    marginBottom: 12,
+    marginBottom: 28,
     alignItems: 'center',
-    minHeight: 180,
+    minHeight: 280,
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#333333',
@@ -515,5 +605,166 @@ const styles = StyleSheet.create({
     color: '#888888',
     textAlign: 'center',
     marginVertical: 8,
+  },
+});
+
+const introStyles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 32,
+    paddingTop: 24,
+    paddingBottom: 36,
+  },
+  titleBlock: {
+    alignItems: 'center',
+  },
+  howTo: {
+    fontSize: 13,
+    color: '#888888',
+    letterSpacing: 3,
+    marginBottom: 4,
+  },
+  appName: {
+    fontSize: 30,
+    fontWeight: 'bold',
+    color: '#FFD700',
+    letterSpacing: 2,
+  },
+  diagramWrapper: {
+    alignItems: 'flex-start',
+  },
+  diagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  iconCell: {
+    width: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  holeEmoji: {
+    fontSize: 36,
+  },
+  rowLabel: {
+    fontSize: 13,
+    color: '#aaaaaa',
+    marginLeft: 14,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  // Short segment — 1/3 of total (hole → phone)
+  segRowShort: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 55,
+  },
+  segLineShort: {
+    width: 2,
+    height: 55,
+    backgroundColor: '#444444',
+    marginLeft: 25, // (52/2) - 1
+  },
+  // Long segment — 2/3 of total (phone → ball)
+  segRowLong: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 110,
+  },
+  segLineLong: {
+    width: 2,
+    height: 110,
+    backgroundColor: '#444444',
+    marginLeft: 25,
+  },
+  segFrac: {
+    fontSize: 15,
+    color: '#666666',
+    marginLeft: 12,
+  },
+  phoneRect: {
+    width: 36,
+    height: 58,
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    borderRadius: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  phoneArrow: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  placeLabel: {
+    fontSize: 14,
+    color: '#FFD700',
+    fontWeight: 'bold',
+    letterSpacing: 1,
+    marginLeft: 14,
+  },
+  placeSub: {
+    fontSize: 12,
+    color: '#888888',
+    marginLeft: 14,
+    marginTop: 4,
+  },
+  ballCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+  },
+  bottomBlock: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 16,
+  },
+  silentBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1200',
+    borderWidth: 1,
+    borderColor: '#cc8800',
+    borderRadius: 10,
+    padding: 14,
+    width: '100%',
+  },
+  silentBell: {
+    fontSize: 28,
+    marginRight: 14,
+  },
+  silentText: {
+    flex: 1,
+  },
+  silentTitle: {
+    fontSize: 13,
+    color: '#ffaa00',
+    fontWeight: 'bold',
+    letterSpacing: 1,
+  },
+  silentSub: {
+    fontSize: 11,
+    color: '#888888',
+    marginTop: 3,
+  },
+  goButton: {
+    backgroundColor: '#006600',
+    paddingVertical: 18,
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+  },
+  goButtonText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    letterSpacing: 2,
   },
 });
