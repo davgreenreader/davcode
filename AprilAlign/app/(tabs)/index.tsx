@@ -17,27 +17,27 @@ const CENTERED_HOLD_MS   = 2500;  // Hold CENTER this long to declare aligned
 // ─── Direction → display / speech maps ───────────────────────────────────────
 // Keys match what main.py sends via BLE (uppercase, after parseTagData trims)
 const DISPLAY_TEXT: Record<string, string> = {
-  'FAR LEFT':       'FAR LEFT',
-  'LEFT':           'PIVOT LEFT',
-  'SLIGHTLY LEFT':  'SLIGHTLY LEFT',
-  '5 LEFT':         'SLIGHTLY LEFT',
+  'FAR LEFT':       'MOVE FAR RIGHT',
+  'LEFT':           'PIVOT RIGHT',
+  'SLIGHTLY LEFT':  'SLIGHTLY RIGHT',
+  '5 LEFT':         'SLIGHTLY RIGHT',
   'CENTER':         'CENTERED',
-  '5 RIGHT':        'SLIGHTLY RIGHT',
-  'SLIGHTLY RIGHT': 'SLIGHTLY RIGHT',
-  'RIGHT':          'PIVOT RIGHT',
-  'FAR RIGHT':      'FAR RIGHT',
+  '5 RIGHT':        'SLIGHTLY LEFT',
+  'SLIGHTLY RIGHT': 'SLIGHTLY LEFT',
+  'RIGHT':          'PIVOT LEFT',
+  'FAR RIGHT':      'FAR LEFT',
 };
 
 const SPEECH_CUE: Record<string, string> = {
-  'FAR LEFT':       'Move far left',
-  'LEFT':           'Pivot left',
-  'SLIGHTLY LEFT':  'Slightly left',
-  '5 LEFT':         'Slightly left',
+  'FAR LEFT':       'Move far right',
+  'LEFT':           'Pivot right',
+  'SLIGHTLY LEFT':  'Slightly right',
+  '5 LEFT':         'Slightly right',
   'CENTER':         'Centered',
-  '5 RIGHT':        'Slightly right',
-  'SLIGHTLY RIGHT': 'Slightly right',
-  'RIGHT':          'Pivot right',
-  'FAR RIGHT':      'Move far right',
+  '5 RIGHT':        'Slightly left',
+  'SLIGHTLY RIGHT': 'Slightly left',
+  'RIGHT':          'Pivot left',
+  'FAR RIGHT':      'Move far left',
 };
 
 // Color per direction zone
@@ -123,6 +123,7 @@ export default function AprilAlignScreen() {
     centeredSince.current    = null;
     lastSpokenAt.current     = 0;
     lastSpokenStatus.current = null;
+    lastKnownTagData.current = null;
     setIsDone(false);
     connect();
   }, [connect]);

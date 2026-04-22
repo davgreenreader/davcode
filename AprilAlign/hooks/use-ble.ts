@@ -99,6 +99,12 @@ export function useBLE() {
     const manager = managerRef.current;
     if (!manager) return;
 
+    // Await disconnect first so the Pi finishes its connection teardown
+    // and resumes advertising before we start scanning
+    if (deviceRef.current) {
+      await deviceRef.current.cancelConnection().catch(() => {});
+      deviceRef.current = null;
+    }
     cleanupConnections();
     setError(null);
     setTagData(null);
