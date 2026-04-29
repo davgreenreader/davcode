@@ -12,7 +12,7 @@ import { useBLE, TagData } from '@/hooks/use-ble';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SPEECH_INTERVAL_MS = 3000;  // Don't repeat the same cue within 3s
-const CENTERED_HOLD_MS   = 2500;  // Hold CENTER this long to declare aligned
+const CENTERED_HOLD_MS   = 4500;  // Hold CENTER this long to declare aligned
 
 // ─── Direction → display / speech maps ───────────────────────────────────────
 // Keys match what main.py sends via BLE (uppercase, after parseTagData trims)
@@ -65,17 +65,18 @@ function directionColor(direction: string): string {
 export default function AprilAlignScreen() {
   const { status, tagData, error, connect, disconnect } = useBLE();
 
-  const lastSpokenStatus  = useRef<string | null>(null);
-  const lastSpokenAt      = useRef(0);
   const centeredSince     = useRef<number | null>(null);
+  const centeredTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastKnownTagData  = useRef<TagData | null>(null);
+  const isDoneRef         = useRef(false);
 
   const [isDone, setIsDone] = useState(false);
 
   const isNoTag = (d: string) => d === 'NO TAG' || d === 'NO_TAG';
 
-  // ── Speech + centered-hold logic ──────────────────────────────────────────
+  // ── Centered-hold + instant first-detection speak ─────────────────────────
   useEffect(() => {
+    if (isDoneRef.current) return;
     if (status !== 'connected' || !tagData) {
       centeredSince.current = null;
       return;
@@ -85,44 +86,61 @@ export default function AprilAlignScreen() {
     const now = Date.now();
 
     if (!isNoTag(direction)) {
-      // Tag is visible — update last known
+      const isFirstDetection = lastKnownTagData.current === null;
       lastKnownTagData.current = tagData;
 
-      // Centered hold timer
       if (direction === 'CENTER') {
         if (centeredSince.current === null) {
           centeredSince.current = now;
-        } else if (now - centeredSince.current >= CENTERED_HOLD_MS) {
-          Speech.speak('Aligned! You are centered on the tag.', { rate: 0.9 });
-          setIsDone(true);
-          return;
+          centeredTimerRef.current = setTimeout(() => {
+            if (centeredSince.current !== null && !isDoneRef.current) {
+              isDoneRef.current = true;
+              Speech.speak('Aligned! You are centered on the tag.', { rate: 0.9 });
+              setIsDone(true);
+            }
+          }, CENTERED_HOLD_MS);
         }
       } else {
         centeredSince.current = null;
+        if (centeredTimerRef.current) {
+          clearTimeout(centeredTimerRef.current);
+          centeredTimerRef.current = null;
+        }
       }
-    }
 
-    // Use last known direction for speech when tag is lost
-    const effectiveDirection = isNoTag(direction)
-      ? (lastKnownTagData.current?.direction ?? null)
-      : direction;
-
-    if (!effectiveDirection) return;
-
-    // Speak on a pure time gate — first detection is instant (lastSpokenAt starts at 0)
-    const cue = SPEECH_CUE[effectiveDirection] ?? '';
-    if (cue && now - lastSpokenAt.current >= SPEECH_INTERVAL_MS) {
-      Speech.speak(cue, { rate: 0.95 });
-      lastSpokenAt.current     = now;
-      lastSpokenStatus.current = effectiveDirection;
+      // Speak instantly on first tag detection so the user isn't waiting up to 3s
+      if (isFirstDetection) {
+        const cue = SPEECH_CUE[direction] ?? '';
+        if (cue) Speech.speak(cue, { rate: 0.95 });
+      }
     }
   }, [tagData, status]);
 
+  // ── Recurring 3-second speech interval ────────────────────────────────────
+  // Runs independently of BLE packets — the Pi only notifies on direction change
+  // so the tagData effect alone would never repeat the cue while direction is stable
+  useEffect(() => {
+    if (status !== 'connected') return;
+
+    const interval = setInterval(() => {
+      if (isDoneRef.current) return;
+      const dir = lastKnownTagData.current?.direction ?? null;
+      if (!dir || dir === 'NO TAG' || dir === 'NO_TAG') return;
+      const cue = SPEECH_CUE[dir] ?? '';
+      if (cue) Speech.speak(cue, { rate: 0.95 });
+    }, SPEECH_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [status]);
+
   // ── Restart session ───────────────────────────────────────────────────────
   const restart = useCallback(() => {
+    isDoneRef.current        = false;
     centeredSince.current    = null;
-    lastSpokenAt.current     = 0;
-    lastSpokenStatus.current = null;
+    if (centeredTimerRef.current) {
+      clearTimeout(centeredTimerRef.current);
+      centeredTimerRef.current = null;
+    }
     lastKnownTagData.current = null;
     setIsDone(false);
     connect();
