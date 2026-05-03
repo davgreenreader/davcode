@@ -6,4 +6,7 @@ Welcome!
 
 **GreenReader**: A react native mobile app which communicates the terrain of a given putt to the golfer via TTS. This app uses orientation sensors built into the iPhone to get pitch and roll measurements, informing whether the putt is uphill/downhill or breaking left/right. With a given distance in mind, we perform a calculation of how many cups to the left/right the golfer should aim.
 
+The above apps can be built and ran in Xcode, assuming you have a paid Apple Developer account. 
+
+
 **main.py** and **ble_service.py** provide the code for the peripheral bluetooth device, the raspberry pi.
