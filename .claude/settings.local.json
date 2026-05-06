@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Ryan\\\\MultiD\\\\davcode\" -Force)",
+      "Bash(Select-Object Name, Mode)",
+      "Bash(dir /B)"
+    ]
+  }
+}
